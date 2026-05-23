@@ -2,6 +2,9 @@
 **Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping**
 
 实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**。
+<img width="780" height="1533" alt="1807" src="https://github.com/user-attachments/assets/85f734f1-9408-4080-843d-a185cb77d7ee" />
+<img width="789" height="1521" alt="1805" src="https://github.com/user-attachments/assets/aa501070-86d4-4a68-8d1b-e349f330d47a" />
+
 
 ## 主要功能
 - 自动获取视频CC字幕、AI字幕
@@ -21,6 +24,8 @@
 
 ## API配置
 - 支持用户自定义API。
+<img width="773" height="1130" alt="1810" src="https://github.com/user-attachments/assets/2b79b3fb-e0ef-4ebf-ad58-d96f7a5253cc" />
+
 
 ## 使用须知
 - 本脚本为个人编程学习、技术研究、代码练习用途开源免费分享，仅用于学习前端交互、网页脚本逻辑等，不用于任何商业盈利。
