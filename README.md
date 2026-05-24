@@ -3,8 +3,12 @@
 
 实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**。
 
-<img width="273" height="537" alt="1807" src="https://github.com/user-attachments/assets/85f734f1-9408-4080-843d-a185cb77d7ee" />
-<img width="273" height="537" alt="1805" src="https://github.com/user-attachments/assets/aa501070-86d4-4a68-8d1b-e349f330d47a" />
+<div style="display: flex; flex-wrap: nowrap; gap: 4px; max-width: 90%; margin: 0 auto;">
+  <img src="https://github.com/user-attachments/assets/0b342f2a-b0c4-488d-9ca3-a878bf20b9cc" alt="图片1" style="width: 32%; height: auto;">
+  <img src="https://github.com/user-attachments/assets/52ebf52a-03ab-4462-a528-72b80b8a826c" alt="图片2" style="width: 32%; height: auto;">
+  <img src="https://github.com/user-attachments/assets/366c6eb0-dbdc-412e-84c7-58c0f13f5327" alt="图片3" style="width: 32%; height: auto;">
+</div>
+
 
 
 ## 主要功能
@@ -25,7 +29,7 @@
 
 ## API配置
 - 支持用户自定义API。
-<img width="273" height="399" alt="1810" src="https://github.com/user-attachments/assets/2b79b3fb-e0ef-4ebf-ad58-d96f7a5253cc" />
+<img src="https://github.com/user-attachments/assets/597447dd-2082-49de-88d7-dba6e368c418" style="width:40%; height:auto;">
 
 
 ## 使用须知
