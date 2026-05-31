@@ -1,6 +1,10 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [1.3.2]
+### Added
+- 热门评论舆情分析功能。
+
 ## [1.2.3]
 
 ### Added
