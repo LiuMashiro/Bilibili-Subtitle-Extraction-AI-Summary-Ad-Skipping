@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      1.2.3
-// @description  自动提取B站视频字幕，支持AI生成的CC字幕，通过AI总结+广告识别，自动跳过广告。支持自定义API设置。
+// @version      1.3.2
+// @description  自动提取B站视频字幕，支持AI生成的CC字幕，通过AI总结+广告识别，自动跳过广告。支持热门评论舆论分析。
 // @author       LiuMashiro
 // @license      MIT
 // @match        *://www.bilibili.com/video/*
@@ -22,6 +22,8 @@
 // @connect      generativelanguage.googleapis.com
 // @connect      *
 // @run-at       document-idle
+// @downloadURL https://update.greasyfork.org/scripts/579482/B%E7%AB%99%E5%AD%97%E5%B9%95%E8%8E%B7%E5%8F%96%E3%80%81AI%E5%88%86%E6%9E%90%E5%8F%8A%E5%B9%BF%E5%91%8A%E8%B7%B3%E8%BF%87%E5%B7%A5%E5%85%B7.user.js
+// @updateURL https://update.greasyfork.org/scripts/579482/B%E7%AB%99%E5%AD%97%E5%B9%95%E8%8E%B7%E5%8F%96%E3%80%81AI%E5%88%86%E6%9E%90%E5%8F%8A%E5%B9%BF%E5%91%8A%E8%B7%B3%E8%BF%87%E5%B7%A5%E5%85%B7.meta.js
 // ==/UserScript==
 
 (function () {
@@ -81,6 +83,7 @@
     let autoGenSummary = GM_getValue('bse_auto_summary', false);
     let autoOpenPanel = GM_getValue('bse_auto_open_panel', true);
     let autoOpenTab = GM_getValue('bse_auto_open_tab', 'preview');
+    let enableOpinionAnalysis = GM_getValue('bse_opinion_analysis', true);
 
     // ===================== 3. 常量与提示词 =====================
     const AD_BRAND_LIST = ["转转", "追觅", "神奇小鹿", "妙界", "拼多多", "加速器", "得物", "萌牙家"];
@@ -105,6 +108,13 @@
 
 - **示例内容**：
   - 示例内容。
+
+如果提供了热门评论数据，在"核心结论与关键信息"之后，使用分割线"---"隔开，输出舆论分析：
+## 舆论分析
+- 提炼评论区的1-N个主要观点方向（不一定非要是多个，根据情况决定），简明概括每个方向的核心立场，标注每个观点方向的情感倾向（正面/负面/中性/混合）和大约占比。
+- 如有高赞代表性观点，可简要引用（无需标注用户名）
+- 一句话概括评论区整体氛围
+如果没有提供评论数据，则跳过此部分，不输出"---"和"### 舆论分析"。
 
 识别中间插入的广告。在全文的最后末尾列出"广告时间"部分，支持以下两种格式：
 格式A（同一行）：广告时间[MM:SS - MM:SS]
@@ -371,6 +381,8 @@
     let showRawAIText = false;
     let sourceCollapsed = true;
     let currentVideoKey = null;
+    let currentAid = null;
+    let hotComments = [];
     let aiSummaryCache = {};
     let aiConversationHistory = [];
     let adSegments = [];
@@ -378,30 +390,19 @@
     let adSkipInterval = null;
     let progressMarkObserver = null;
 
-    // 并发控制与生命周期守卫
     let isGeneratingAI = false;
     let autoGenerateTimer = null;
     let currentGenerationId = 0;
     let progressMarkInitialized = false;
-
-    // 广告检测结果缓存
     let lastAdCheckResult = null;
 
     // ===================== 7. 日志工具 =====================
-    function log(...args) {
-        console.log('[BSE]', ...args);
-    }
-
-    /** 生成毫秒级时间戳字符串 HH:MM:SS.mmm */
+    function log(...args) { console.log('[BSE]', ...args); }
     function _ts() {
         const n = new Date();
         return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}:${String(n.getSeconds()).padStart(2, '0')}.${String(n.getMilliseconds()).padStart(3, '0')}`;
     }
-
-    /** 结构化 API 日志 */
-    function logAPI(action, data) {
-        console.log(`[BSE-API] [${_ts()}] ${action}`, data !== undefined ? data : '');
-    }
+    function logAPI(action, data) { console.log(`[BSE-API] [${_ts()}] ${action}`, data !== undefined ? data : ''); }
 
     // ===================== 8. 缓存管理 =====================
     function loadCache() {
@@ -409,1359 +410,314 @@
         const result = {};
         for (const key of Object.keys(raw)) {
             const val = raw[key];
-            if (typeof val === 'string') {
-                result[key] = { summary: val, qa: [] };
-            } else if (val && typeof val === 'object' && typeof val.summary === 'string') {
-                result[key] = { summary: val.summary, qa: Array.isArray(val.qa) ? val.qa : [] };
-            }
+            if (typeof val === 'string') result[key] = { summary: val, qa: [] };
+            else if (val && typeof val === 'object' && typeof val.summary === 'string') result[key] = { summary: val.summary, qa: Array.isArray(val.qa) ? val.qa : [] };
         }
-        logAPI('缓存加载完成', { 条目数: Object.keys(result).length });
         return result;
     }
-
     function getCachedSummary(videoKey) {
         const entry = aiSummaryCache[videoKey];
-        const hit = !!(entry && (typeof entry === 'string' ? entry : entry.summary));
-        logAPI('缓存读取', { key: videoKey, 命中: hit });
         if (!entry) return null;
-        if (typeof entry === 'string') return entry;
-        return entry.summary || null;
+        return typeof entry === 'string' ? entry : entry.summary || null;
     }
-
     function getCachedQA(videoKey) {
         const entry = aiSummaryCache[videoKey];
-        if (!entry) return [];
-        if (typeof entry === 'string') return [];
+        if (!entry || typeof entry === 'string') return [];
         return Array.isArray(entry.qa) ? entry.qa : [];
     }
-
     function setCachedSummary(videoKey, summary) {
         const existing = aiSummaryCache[videoKey];
         const qa = (existing && Array.isArray(existing.qa)) ? existing.qa : [];
         aiSummaryCache[videoKey] = { summary, qa };
         GM_setValue('aiSummaryCache', aiSummaryCache);
-        logAPI('缓存写入', { key: videoKey, 摘要长度: summary.length });
     }
-
     function appendCachedQA(videoKey, q, a) {
         const entry = aiSummaryCache[videoKey];
         if (!entry) return;
         if (!Array.isArray(entry.qa)) entry.qa = [];
         entry.qa.push({ q, a });
         GM_setValue('aiSummaryCache', aiSummaryCache);
-        logAPI('缓存追加QA', { key: videoKey, 问题: q.slice(0, 50) + '...' });
     }
 
     // ===================== 9. 通用工具 =====================
-    function formatTime(s) {
-        const m = Math.floor(s / 60), sec = Math.floor(s % 60);
-        return `${m}:${sec.toString().padStart(2, '0')}`;
+    function formatTime(s) { const m = Math.floor(s / 60), sec = Math.floor(s % 60); return `${m}:${sec.toString().padStart(2, '0')}`; }
+    function formatTimeWithMs(s) { const m = Math.floor(s / 60), sec = Math.floor(s % 60), ms = Math.floor((s % 1) * 100); return `${m}:${sec.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`; }
+    function formatTimeForSRT(s) { const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); const sec = Math.floor(s % 60); const ms = Math.floor((s % 1) * 1000); return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`; }
+    function parseAdTime(str) { str = str.trim(); const m = str.match(/^(\d+):(\d{2})$/); return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null; }
+    function escapeHtml(t) { if (!t) return ''; return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+    function formatCommentsForAI() {
+        if (!hotComments.length) return '';
+        return hotComments.map(c => `${c.content.length > 200 ? c.content.slice(0, 200) + '...' : c.content} ${c.like}`).join('\n');
     }
-    function formatTimeWithMs(s) {
-        const m = Math.floor(s / 60), sec = Math.floor(s % 60), ms = Math.floor((s % 1) * 100);
-        return `${m}:${sec.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
-    }
-    function formatTimeForSRT(s) {
-        const h = Math.floor(s / 3600);
-        const m = Math.floor((s % 3600) / 60);
-        const sec = Math.floor(s % 60);
-        const ms = Math.floor((s % 1) * 1000);
-        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`;
-    }
-    function parseAdTime(str) {
-        str = str.trim();
-        const m = str.match(/^(\d+):(\d{2})$/);
-        return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null;
-    }
-    function escapeHtml(t) {
-        if (!t) return '';
-        return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
     function showToast(msg, type = '') {
         let el = document.querySelector('.bse-toast');
         if (!el) { el = document.createElement('div'); el.className = 'bse-toast'; document.body.appendChild(el); }
-        el.textContent = msg;
-        el.className = 'bse-toast' + (type ? ' ' + type : '');
-        void el.offsetWidth;
-        el.classList.add('show');
-        clearTimeout(el._t);
-        el._t = setTimeout(() => el.classList.remove('show'), 2500);
+        el.textContent = msg; el.className = 'bse-toast' + (type ? ' ' + type : '');
+        void el.offsetWidth; el.classList.add('show');
+        clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2500);
     }
-
-    function seekToTime(sec) {
-        const v = document.querySelector('video');
-        if (v) { v.currentTime = sec; showToast(`跳转到 ${formatTime(sec)}`, 'success'); }
-    }
-
-    function setLoadingState(loading) {
-        isLoading = loading;
-        document.querySelector('.bse-status-dot')?.classList.toggle('loading', loading);
-        document.querySelector('#bse-refresh-btn')?.classList.toggle('spinning', loading);
-    }
-
-    function getVideoTitle() {
-        const h1 = document.querySelector('h1.video-title');
-        if (!h1) return '';
-        return h1.dataset.title || h1.getAttribute('title') || h1.textContent.trim();
-    }
-
-    function getVideoDescription() {
-        const descElement = document.querySelector('.desc-info-text');
-        if (!descElement) return '';
-        return descElement.textContent.trim();
-    }
-
-    function getVideoTags() {
-        const tagElements = document.querySelectorAll('.tag-link .tag-name');
-        if (!tagElements || tagElements.length === 0) return [];
-        return Array.from(tagElements).map(tag => tag.textContent.trim());
-    }
+    function seekToTime(sec) { const v = document.querySelector('video'); if (v) { v.currentTime = sec; showToast(`跳转到 ${formatTime(sec)}`, 'success'); } }
+    function setLoadingState(loading) { isLoading = loading; document.querySelector('.bse-status-dot')?.classList.toggle('loading', loading); document.querySelector('#bse-refresh-btn')?.classList.toggle('spinning', loading); }
+    function getVideoTitle() { const h1 = document.querySelector('h1.video-title'); if (!h1) return ''; return h1.dataset.title || h1.getAttribute('title') || h1.textContent.trim(); }
+    function getVideoDescription() { const descElement = document.querySelector('.desc-info-text'); if (!descElement) return ''; return descElement.textContent.trim(); }
+    function getVideoTags() { const tagElements = document.querySelectorAll('.tag-link .tag-name'); if (!tagElements || tagElements.length === 0) return []; return Array.from(tagElements).map(tag => tag.textContent.trim()); }
 
     // ===================== 10. 进度条广告标记 =====================
-    function waitForElement(selector, callback) {
-        const element = document.querySelector(selector);
-        if (element) {
-            callback(element);
-        } else {
-            setTimeout(() => waitForElement(selector, callback), 100);
-        }
-    }
-
+    function waitForElement(selector, callback) { const element = document.querySelector(selector); if (element) callback(element); else setTimeout(() => waitForElement(selector, callback), 100); }
     function createProgressMark(video, progressArea) {
         const existingMark = document.getElementById('bse-ad-progress-mark');
         if (existingMark) existingMark.remove();
         if (!adSegments || adSegments.length === 0) return;
-
-        const mark = document.createElement('div');
-        mark.id = 'bse-ad-progress-mark';
-        mark.style.position = 'absolute';
-        mark.style.height = '100%';
-        mark.style.backgroundColor = AD_MARK_COLOR;
-        mark.style.zIndex = '1';
-        mark.style.pointerEvents = 'none';
-        mark.style.borderRadius = '2px';
+        const mark = document.createElement('div'); mark.id = 'bse-ad-progress-mark';
+        mark.style.cssText = `position:absolute;height:100%;background:${AD_MARK_COLOR};z-index:1;pointer-events:none;border-radius:2px;`;
         progressArea.appendChild(mark);
-
-        function updateMarkPosition() {
-            const duration = video.duration;
-            if (!duration || duration < adSegments[0].end) return;
-            const startPercent = (adSegments[0].start / duration) * 100;
-            const endPercent = (adSegments[0].end / duration) * 100;
-            mark.style.left = `${startPercent}%`;
-            mark.style.width = `${endPercent - startPercent}%`;
-        }
-
-        updateMarkPosition();
-        video.addEventListener('durationchange', updateMarkPosition);
-        video.addEventListener('loadedmetadata', updateMarkPosition);
-        log('进度条广告标记已创建');
+        function updateMarkPosition() { const duration = video.duration; if (!duration || duration < adSegments[0].end) return; mark.style.left = `${(adSegments[0].start / duration) * 100}%`; mark.style.width = `${(adSegments[0].end / duration) * 100 - (adSegments[0].start / duration) * 100}%`; }
+        updateMarkPosition(); video.addEventListener('durationchange', updateMarkPosition); video.addEventListener('loadedmetadata', updateMarkPosition);
     }
-
     function initProgressMark() {
-        if (progressMarkInitialized) return;
-        progressMarkInitialized = true;
+        if (progressMarkInitialized) return; progressMarkInitialized = true;
         waitForElement('.bpx-player-video-wrap video', (video) => {
             waitForElement('.bpx-player-progress-area', (progressArea) => {
                 createProgressMark(video, progressArea);
                 if (progressMarkObserver) progressMarkObserver.disconnect();
-                progressMarkObserver = new MutationObserver((mutations) => {
-                    for (const mutation of mutations) {
-                        if (mutation.addedNodes.length > 0) {
-                            const newVideo = document.querySelector('.bpx-player-video-wrap video');
-                            if (newVideo && newVideo !== video) {
-                                progressMarkInitialized = false;
-                                initProgressMark();
-                                progressMarkObserver.disconnect();
-                                break;
-                            }
-                        }
-                    }
-                });
+                progressMarkObserver = new MutationObserver(() => { const newVideo = document.querySelector('.bpx-player-video-wrap video'); if (newVideo && newVideo !== video) { progressMarkInitialized = false; initProgressMark(); progressMarkObserver.disconnect(); } });
                 progressMarkObserver.observe(document.body, { childList: true, subtree: true });
             });
         });
     }
 
     // ===================== 11. Markdown 渲染 =====================
-    function processInline(text) {
-        return text
-            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*(.+?)\*/g, '<em>$1</em>')
-            .replace(/`([^`]+)`/g, '<code>$1</code>');
-    }
-
+    function processInline(text) { return text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>').replace(/`([^`]+)`/g, '<code>$1</code>'); }
     function markdownToHtml(md) {
-        if (!md) return '';
-        md = md.replace(/\r\n/g, '\n');
-        const lines = md.split('\n');
+        if (!md) return ''; md = md.replace(/\r\n/g, '\n'); const lines = md.split('\n');
         let out = [], stack = [], inCode = false, code = [];
         for (const line of lines) {
-            if (line.trim().startsWith('```')) {
-                if (inCode) { out.push('<pre><code>' + escapeHtml(code.join('\n')) + '</code></pre>'); code = []; inCode = false; }
-                else inCode = true;
-                continue;
-            }
+            if (line.trim().startsWith('```')) { if (inCode) { out.push('<pre><code>' + escapeHtml(code.join('\n')) + '</code></pre>'); code = []; inCode = false; } else inCode = true; continue; }
             if (inCode) { code.push(line); continue; }
-            const indent = line.match(/^[ \t]*/)[0].replace(/\t/g, '    ').length;
-            const t = line.trim();
-            if (!t) continue;
+            const indent = line.match(/^[ \t]*/)[0].replace(/\t/g, '    ').length; const t = line.trim(); if (!t) continue;
             const ul = t.match(/^[-*][ \t]+(.*)$/), ol = t.match(/^\d+\.[ \t]+(.*)$/);
             if (ul || ol) {
                 const type = ul ? 'ul' : 'ol', cnt = processInline(ul ? ul[1] : ol[1]);
-                if (!stack.length) { stack.push({ type, indent }); out.push(`<${type}>`); }
-                else {
+                if (!stack.length) { stack.push({ type, indent }); out.push(`<${type}>`); } else {
                     const top = stack[stack.length - 1];
                     if (indent > top.indent) { stack.push({ type, indent }); out.push(`<${type}>`); }
-                    else if (indent < top.indent) {
-                        while (stack.length && stack[stack.length - 1].indent > indent) out.push(`</${stack.pop().type}>`);
-                        if (!stack.length || stack[stack.length - 1].indent < indent) { stack.push({ type, indent }); out.push(`<${type}>`); }
-                    } else if (top.type !== type) { out.push(`</${stack.pop().type}>`); stack.push({ type, indent }); out.push(`<${type}>`); }
-                }
-                out.push(`<li>${cnt}</li>`); continue;
-            }
-            while (stack.length) out.push(`</${stack.pop().type}>`);
+                    else if (indent < top.indent) { while (stack.length && stack[stack.length - 1].indent > indent) out.push(`</${stack.pop().type}>`); if (!stack.length || stack[stack.length - 1].indent < indent) { stack.push({ type, indent }); out.push(`<${type}>`); } }
+                    else if (top.type !== type) { out.push(`</${stack.pop().type}>`); stack.push({ type, indent }); out.push(`<${type}>`); }
+                } out.push(`<li>${cnt}</li>`); continue;
+            } while (stack.length) out.push(`</${stack.pop().type}>`);
             if (/^---+$/.test(t)) { out.push('<hr>'); continue; }
-            const h = t.match(/^(#{1,6})[ \t]+(.*)$/);
-            if (h) { out.push(`<h${h[1].length}>${processInline(h[2])}</h${h[1].length}>`); continue; }
-            const bq = t.match(/^>[ \t]*(.*)$/);
-            if (bq) { out.push(`<blockquote>${processInline(bq[1])}</blockquote>`); continue; }
+            const h = t.match(/^(#{1,6})[ \t]+(.*)$/); if (h) { out.push(`<h${h[1].length}>${processInline(h[2])}</h${h[1].length}>`); continue; }
+            const bq = t.match(/^>[ \t]*(.*)$/); if (bq) { out.push(`<blockquote>${processInline(bq[1])}</blockquote>`); continue; }
             out.push(`<p>${processInline(t)}</p>`);
-        }
-        while (stack.length) out.push(`</${stack.pop().type}>`);
-        return out.join('\n');
+        } while (stack.length) out.push(`</${stack.pop().type}>`); return out.join('\n');
     }
 
     // ===================== 12. 广告解析与跳过 =====================
     function extractAdSegments(rawSummary) {
-        const text = rawSummary
-            .replace(/\*/g, '')
-            .replace(/`/g, '')
-            .replace(/#/g, ' ');
-
-        log('广告解析输入(后200字):', JSON.stringify(text.slice(-200)));
-
+        const text = rawSummary.replace(/\*/g, '').replace(/`/g, '').replace(/#/g, ' ');
         const timeRe = /广告时间[\s\S]{0,80}?\[(\d+:\d{2})\s*[-–—~至]\s*(\d+:\d{2})\]/g;
         const timeMatches = [...text.matchAll(timeRe)];
-        log('时间匹配结果:', timeMatches.map(m => `${m[1]}-${m[2]}`));
-
-        if (timeMatches.length > 0) {
-            const last = timeMatches[timeMatches.length - 1];
-            const start = parseAdTime(last[1]), end = parseAdTime(last[2]);
-            if (start !== null && end !== null && end > start) {
-                log('广告解析成功:', last[1], '-', last[2]);
-                return { type: 'has_ad', segments: [{ start, end, startStr: last[1], endStr: last[2] }] };
-            }
-        }
-
-        const noRe = /广告时间[\s\S]{0,80}?\[\s*无[^\]]*\]/g;
-        const noMatches = [...text.matchAll(noRe)];
-        log('无广告匹配结果:', noMatches.length);
-        if (noMatches.length > 0) return { type: 'none', segments: [] };
-
-        log('广告解析失败，格式有误');
+        if (timeMatches.length > 0) { const last = timeMatches[timeMatches.length - 1]; const start = parseAdTime(last[1]), end = parseAdTime(last[2]); if (start !== null && end !== null && end > start) return { type: 'has_ad', segments: [{ start, end, startStr: last[1], endStr: last[2] }] }; }
+        const noRe = /广告时间[\s\S]{0,80}?\[\s*无[^\]]*\]/g; if ([...text.matchAll(noRe)].length > 0) return { type: 'none', segments: [] };
         return { type: 'error', segments: [] };
     }
-
     function stripAdLine(summary) {
-        const lines = summary.split('\n');
-        let cutIndex = lines.length;
-        for (let i = 0; i < lines.length; i++) {
-            if (lines[i].replace(/[#\s*`]/g, '').includes('广告时间')) {
-                cutIndex = i;
-                while (cutIndex > 0 && /^[#\s]/.test(lines[cutIndex - 1]) && lines[cutIndex - 1].trim() === '') {
-                    cutIndex--;
-                }
-                break;
-            }
-        }
+        const lines = summary.split('\n'); let cutIndex = lines.length;
+        for (let i = 0; i < lines.length; i++) { if (lines[i].replace(/[#\s*`]/g, '').includes('广告时间')) { cutIndex = i; while (cutIndex > 0 && /^[#\s]/.test(lines[cutIndex - 1]) && lines[cutIndex - 1].trim() === '') cutIndex--; break; } }
         return lines.slice(0, cutIndex).join('\n').trim();
     }
-
     function initAdSkipMonitor() {
         if (adSkipInterval) clearInterval(adSkipInterval);
-        adSkipInterval = setInterval(() => {
-            if (!adSegments?.length) return;
-            const video = document.querySelector('video');
-            if (!video || video.readyState === 0) return;
-            const ct = video.currentTime;
-            adSegments.forEach((ad, i) => {
-                if (ct >= ad.start && ct < ad.end - 0.3) {
-                    video.currentTime = ad.end;
-                    const key = `${currentVideoKey}-${i}`;
-                    if (Date.now() - (hasJumpedAds[key] || 0) > 3000) {
-                        showToast('✓ 已自动跳过广告', 'success');
-                        log('跳过广告:', ad.startStr, '->', ad.endStr);
-                        hasJumpedAds[key] = Date.now();
-                    }
-                }
-            });
-        }, 1000);
-        log('广告跳过监控已启动');
+        adSkipInterval = setInterval(() => { if (!adSegments?.length) return; const video = document.querySelector('video'); if (!video || video.readyState === 0) return; const ct = video.currentTime; adSegments.forEach((ad, i) => { if (ct >= ad.start && ct < ad.end - 0.3) { video.currentTime = ad.end; const key = `${currentVideoKey}-${i}`; if (Date.now() - (hasJumpedAds[key] || 0) > 3000) { showToast('✓ 已自动跳过广告', 'success'); hasJumpedAds[key] = Date.now(); } } }); }, 1000);
     }
 
     // ===================== 13. B站 API =====================
     async function fetchBilibiliSubtitles() {
-        const url = window.location.href;
-        const bvid = (url.match(/(BV[\w]+)/) || [])[1];
-        const page = parseInt((url.match(/[?&]p=(\d+)/) || [, 1])[1]);
-        if (!bvid) { logAPI('B站API', { 状态: '未检测到BV号' }); return []; }
+        const url = window.location.href; const bvid = (url.match(/(BV[\w]+)/) || [])[1]; const page = parseInt((url.match(/[?&]p=(\d+)/) || [, 1])[1]);
+        if (!bvid) return [];
         try {
-            logAPI('B站API请求', { 接口: 'view', bvid, page });
-            const vr = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, { credentials: 'include' });
-            const vd = await vr.json();
-            if (vd.code !== 0 || !vd.data) { logAPI('B站API响应', { 接口: 'view', 状态: '失败', code: vd.code }); return []; }
-            const aid = vd.data.aid, pages = vd.data.pages || [];
-            let cid = vd.data.cid;
-            if (pages.length >= page) cid = pages[page - 1].cid;
-            logAPI('B站API请求', { 接口: 'player/wbi/v2', aid, cid });
-            const pr = await fetch(`https://api.bilibili.com/x/player/wbi/v2?aid=${aid}&cid=${cid}`, { credentials: 'include' });
-            const pd = await pr.json();
-            if (pd.code !== 0 || !pd.data?.subtitle?.subtitles) { logAPI('B站API响应', { 接口: 'player', 状态: '无字幕', code: pd.code }); return []; }
-            const result = pd.data.subtitle.subtitles
-                .filter(s => s.lan === 'zh-CN' || s.lan === 'zh' || s.lan.startsWith('ai-zh'))
-                .map((s, i) => ({ id: s.id || i, lan: s.lan, lan_doc: s.lan_doc, subtitle_url: s.subtitle_url, isAI: s.lan.startsWith('ai-'), body: null }));
-            logAPI('B站API响应', { 接口: '字幕列表', 数量: result.length, 类型: result.map(s => s.lan_doc) });
-            return result;
-        } catch (e) { logAPI('B站API错误', { 错误: e.message }); return []; }
+            const vr = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, { credentials: 'include' }); const vd = await vr.json();
+            if (vd.code !== 0 || !vd.data) return [];
+            const aid = vd.data.aid, pages = vd.data.pages || []; let cid = vd.data.cid; if (pages.length >= page) cid = pages[page - 1].cid;
+            currentAid = aid;
+            const pr = await fetch(`https://api.bilibili.com/x/player/wbi/v2?aid=${aid}&cid=${cid}`, { credentials: 'include' }); const pd = await pr.json();
+            if (pd.code !== 0 || !pd.data?.subtitle?.subtitles) return [];
+            return pd.data.subtitle.subtitles.filter(s => s.lan === 'zh-CN' || s.lan === 'zh' || s.lan.startsWith('ai-zh')).map((s, i) => ({ id: s.id || i, lan: s.lan, lan_doc: s.lan_doc, subtitle_url: s.subtitle_url, isAI: s.lan.startsWith('ai-'), body: null }));
+        } catch (e) { return []; }
     }
-
-    async function fetchSubtitleContent(url) {
-        try {
-            if (url.startsWith('//')) url = 'https:' + url;
-            logAPI('字幕内容请求', { url: url.slice(0, 80) });
-            const r = await fetch(url);
-            const d = await r.json();
-            const body = d.body || [];
-            logAPI('字幕内容响应', { 条数: body.length });
-            return body;
-        } catch (e) { logAPI('字幕内容错误', { 错误: e.message }); return []; }
+    async function fetchSubtitleContent(url) { try { if (url.startsWith('//')) url = 'https:' + url; const r = await fetch(url); const d = await r.json(); return d.body || []; } catch (e) { return []; } }
+    async function fetchHotComments() {
+        let aid = currentAid; if (!aid) { try { aid = unsafeWindow.__INITIAL_STATE__?.aid; } catch {} } if (!aid) return [];
+        try { const r = await fetch(`https://api.bilibili.com/x/v2/reply/main?type=1&oid=${aid}&mode=3&next=0&ps=30`, { credentials: 'include' }); const d = await r.json(); if (d.code !== 0 || !d.data?.replies) return []; return d.data.replies.map(r => ({ content: r.content.message, like: r.like })); } catch (e) { return []; }
     }
 
     // ===================== 14. AI API 调用 =====================
     async function callAPIStream(messages, onChunk) {
-        let isGemini = API_URL.includes('generativelanguage.googleapis.com');
-        let actualModel = bse_model.replace(' (免费)', '');
-        let fetchUrl = API_URL;
-        let headers = { 'Content-Type': 'application/json' };
-        let bodyData = {};
-
-        if (isGemini) {
-            let mName = actualModel;
-            fetchUrl = fetchUrl.replace('{model_name}', mName);
-            if (fetchUrl.includes(':generateContent')) {
-                fetchUrl = fetchUrl.replace(':generateContent', ':streamGenerateContent');
-            }
-            fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${API_KEY}&alt=sse`;
-            bodyData = {
-                contents: messages.map(m => ({
-                    role: m.role === 'assistant' ? 'model' : 'user',
-                    parts: [{ text: m.content }]
-                }))
-            };
-        } else {
-            headers['Authorization'] = `Bearer ${API_KEY}`;
-            headers['Accept'] = 'text/event-stream';
-            bodyData = { model: actualModel, messages: messages, stream: true };
-        }
-
-        // 结构化请求日志
-        logAPI('=== AI API 流式调用开始 ===', {
-            URL: fetchUrl,
-            模型: actualModel,
-            平台: isGemini ? 'Gemini' : 'OpenAI兼容',
-            消息数量: messages.length,
-            消息概要: messages.map((m, i) => ({
-                序号: i,
-                角色: m.role,
-                内容长度: m.content.length,
-                内容前100字: m.content.slice(0, 100)
-            }))
-        });
-        logAPI('请求', { messages: messages });
-
-        const startTime = Date.now();
-        const resp = await fetch(fetchUrl, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(bodyData)
-        });
-
-        if (!resp.ok) {
-            const errMsg = `HTTP ${resp.status}`;
-            logAPI('=== AI API 流式调用失败 ===', { 错误: errMsg, 耗时ms: Date.now() - startTime });
-            throw new Error(errMsg);
-        }
-        if (!resp.body) {
-            logAPI('=== AI API 流式调用失败 ===', { 错误: '不支持流式响应', 耗时ms: Date.now() - startTime });
-            throw new Error('不支持流式响应');
-        }
-
-        const reader = resp.body.getReader(), dec = new TextDecoder('utf-8');
-        let buf = '', full = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value, { stream: true });
-            const lines = buf.split(/\r?\n/);
-            buf = lines.pop() || '';
-
-            for (const line of lines) {
-                const t = line.trim();
-                if (!t || t.startsWith(':')) continue;
-                if (t.startsWith('data:')) {
-                    const ds = t.slice(5).trim();
-                    if (ds === '[DONE]') {
-                        logAPI('=== AI API 流式调用完成 ===', {
-                            耗时ms: Date.now() - startTime,
-                            响应全长: full.length
-                        });
-                        logAPI('完整响应原文', { text: full });
-                        return full;
-                    }
-                    try {
-                        const d = JSON.parse(ds);
-                        let chunk = '';
-                        if (isGemini) {
-                            chunk = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                        } else {
-                            chunk = d.choices?.[0]?.delta?.content || '';
-                        }
-                        if (chunk) {
-                            full += chunk;
-                            onChunk(full);
-                        }
-                    } catch { }
-                }
-            }
-        }
-
-        logAPI('=== AI API 流式调用完成(流结束) ===', {
-            耗时ms: Date.now() - startTime,
-            响应全长: full.length
-        });
-        logAPI('完整响应原文', { text: full });
-        return full;
+        let isGemini = API_URL.includes('generativelanguage.googleapis.com'); let actualModel = bse_model.replace(' (免费)', '');
+        let fetchUrl = API_URL; let headers = { 'Content-Type': 'application/json' }; let bodyData = {};
+        if (isGemini) { fetchUrl = fetchUrl.replace('{model_name}', actualModel); if (fetchUrl.includes(':generateContent')) fetchUrl = fetchUrl.replace(':generateContent', ':streamGenerateContent'); fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${API_KEY}&alt=sse`; bodyData = { contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) }; }
+        else { headers['Authorization'] = `Bearer ${API_KEY}`; headers['Accept'] = 'text/event-stream'; bodyData = { model: actualModel, messages: messages, stream: true }; }
+        const startTime = Date.now(); const resp = await fetch(fetchUrl, { method: 'POST', headers, body: JSON.stringify(bodyData) });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`); if (!resp.body) throw new Error('不支持流式响应');
+        const reader = resp.body.getReader(), dec = new TextDecoder('utf-8'); let buf = '', full = '';
+        while (true) { const { done, value } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true }); const lines = buf.split(/\r?\n/); buf = lines.pop() || '';
+            for (const line of lines) { const t = line.trim(); if (!t || t.startsWith(':')) continue; if (t.startsWith('data:')) { const ds = t.slice(5).trim(); if (ds === '[DONE]') return full; try { const d = JSON.parse(ds); let chunk = isGemini ? (d.candidates?.[0]?.content?.parts?.[0]?.text || '') : (d.choices?.[0]?.delta?.content || ''); if (chunk) { full += chunk; onChunk(full); } } catch {} } } } return full;
     }
-
     function callAPINoStream(messages) {
         return new Promise((resolve, reject) => {
-            let isGemini = API_URL.includes('generativelanguage.googleapis.com');
-            let actualModel = bse_model.replace(' (免费)', '');
-            let fetchUrl = API_URL;
-            let headers = { 'Content-Type': 'application/json' };
-            let bodyData = {};
-
-            if (isGemini) {
-                let mName = actualModel;
-                fetchUrl = fetchUrl.replace('{model_name}', mName);
-                fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${API_KEY}`;
-                bodyData = {
-                    contents: messages.map(m => ({
-                        role: m.role === 'assistant' ? 'model' : 'user',
-                        parts: [{ text: m.content }]
-                    }))
-                };
-            } else {
-                headers['Authorization'] = `Bearer ${API_KEY}`;
-                bodyData = { model: actualModel, messages: messages };
-            }
-
-            logAPI('=== AI API 非流式调用开始 ===', {
-                URL: fetchUrl,
-                模型: actualModel,
-                平台: isGemini ? 'Gemini' : 'OpenAI兼容',
-                消息数量: messages.length,
-                消息概要: messages.map((m, i) => ({
-                    序号: i,
-                    角色: m.role,
-                    内容长度: m.content.length,
-                    内容前100字: m.content.slice(0, 100)
-                }))
-            });
-            logAPI('请求', { messages: messages });
-
-            const startTime = Date.now();
-
-            GM_xmlhttpRequest({
-                method: 'POST',
-                url: fetchUrl,
-                headers: headers,
-                data: JSON.stringify(bodyData),
-                timeout: 60000,
-                onload(r) {
-                    try {
-                        const d = JSON.parse(r.responseText);
-                        if (d.error) {
-                            logAPI('=== AI API 非流式调用失败 ===', { 错误: d.error, 耗时ms: Date.now() - startTime });
-                            return reject(new Error(d.error.message || JSON.stringify(d.error)));
-                        }
-
-                        let result = '';
-                        if (isGemini) {
-                            if (d.candidates?.[0]?.content?.parts?.[0]?.text) {
-                                result = d.candidates[0].content.parts[0].text;
-                            }
-                        } else {
-                            if (d.choices?.[0]?.message?.content) {
-                                result = d.choices[0].message.content;
-                            }
-                        }
-
-                        if (!result) {
-                            logAPI('=== AI API 非流式调用异常 ===', { 响应: d, 耗时ms: Date.now() - startTime });
-                            return reject(new Error('API返回异常'));
-                        }
-
-                        logAPI('=== AI API 非流式调用完成 ===', { 耗时ms: Date.now() - startTime, 响应长度: result.length });
-                        logAPI('完整响应原文(非流式)', { text: result });
-                        resolve(result);
-                    } catch (e) {
-                        logAPI('=== AI API 非流式解析失败 ===', { 错误: e.message, 耗时ms: Date.now() - startTime });
-                        reject(new Error('解析失败'));
-                    }
-                },
-                onerror() {
-                    logAPI('=== AI API 非流式网络错误 ===', { 耗时ms: Date.now() - startTime });
-                    reject(new Error('网络错误'));
-                },
-                ontimeout() {
-                    logAPI('=== AI API 非流式超时 ===', { 耗时ms: Date.now() - startTime });
-                    reject(new Error('请求超时'));
-                }
+            let isGemini = API_URL.includes('generativelanguage.googleapis.com'); let actualModel = bse_model.replace(' (免费)', '');
+            let fetchUrl = API_URL; let headers = { 'Content-Type': 'application/json' }; let bodyData = {};
+            if (isGemini) { fetchUrl = fetchUrl.replace('{model_name}', actualModel); fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${API_KEY}`; bodyData = { contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) }; }
+            else { headers['Authorization'] = `Bearer ${API_KEY}`; bodyData = { model: actualModel, messages: messages }; }
+            GM_xmlhttpRequest({ method: 'POST', url: fetchUrl, headers, data: JSON.stringify(bodyData), timeout: 60000,
+                onload(r) { try { const d = JSON.parse(r.responseText); if (d.error) return reject(new Error(d.error.message || JSON.stringify(d.error))); let result = isGemini ? (d.candidates?.[0]?.content?.parts?.[0]?.text) : (d.choices?.[0]?.message?.content); if (!result) return reject(new Error('API返回异常')); resolve(result); } catch (e) { reject(new Error('解析失败')); } },
+                onerror() { reject(new Error('网络错误')); }, ontimeout() { reject(new Error('请求超时')); }
             });
         });
     }
-
     async function generateAISummaryStream(subtitleText, streamEl) {
-        const videoTitle = getVideoTitle();
-        const videoDesc = getVideoDescription();
-        const videoTags = getVideoTags();
-
-        let contextInfo = '';
-        if (videoTitle) contextInfo += `视频标题：${videoTitle}\n`;
-        if (videoDesc) contextInfo += `视频简介：${videoDesc}\n`;
-        if (videoTags.length > 0) contextInfo += `视频标签：${videoTags.join(', ')}\n`;
-        if (contextInfo) contextInfo += '\n';
-
+        let contextInfo = ''; const videoTitle = getVideoTitle(); const videoDesc = getVideoDescription(); const videoTags = getVideoTags();
+        if (videoTitle) contextInfo += `视频标题：${videoTitle}\n`; if (videoDesc) contextInfo += `视频简介：${videoDesc}\n`; if (videoTags.length > 0) contextInfo += `视频标签：${videoTags.join(', ')}\n`; if (contextInfo) contextInfo += '\n';
+        const commentsText = (enableOpinionAnalysis && hotComments.length > 0) ? formatCommentsForAI() : '';
+        if (commentsText) contextInfo += `===== 热门评论（按热度排序）=====\n${commentsText}\n\n`;
         const messages = [{ role: 'user', content: `${AI_SUMMARY_PROMPT}\n\n${contextInfo}${subtitleText}` }];
-        let summary = await callAPIStream(messages, text => {
-            safeSetInnerHTML(streamEl, markdownToHtml(text));
-            streamEl.scrollTop = streamEl.scrollHeight;
-        });
-
-        log('AI原始输出(后300字):', JSON.stringify(summary.slice(-300)));
-
-        let adCheck = extractAdSegments(summary);
-        lastAdCheckResult = adCheck;
-
+        let summary = await callAPIStream(messages, text => { safeSetInnerHTML(streamEl, markdownToHtml(text)); streamEl.scrollTop = streamEl.scrollHeight; });
+        let adCheck = extractAdSegments(summary); lastAdCheckResult = adCheck;
         if (adCheck.type === 'error') {
-            log('格式有误，触发内部打回...');
-            safeSetInnerHTML(streamEl, markdownToHtml(summary) +
-                '<div style="margin-top:14px;color:#f59e0b;font-size:13px;display:flex;align-items:center;gap:6px;">' +
-                '<div class="bse-spinner" style="width:14px;height:14px;border-width:2px;"></div>格式校验修正中...</div>');
-
-            messages.push({ role: 'assistant', content: summary });
-            messages.push({ role: 'user', content: '你没有正确输出广告时间。请输出一行：有广告输出"广告时间[MM:SS - MM:SS]"，没广告输出"广告时间[无]"。只输出这一行，不含其他任何内容。必须在同一行。' });
-            try {
-                const fix = await callAPINoStream(messages);
-                log('打回修正结果:', fix);
-                summary = summary + '\n' + fix.trim();
-                adCheck = extractAdSegments(summary);
-                lastAdCheckResult = adCheck;
-                log('打回后重验:', adCheck.type, adCheck.segments);
-                safeSetInnerHTML(streamEl, markdownToHtml(summary));
-            } catch (e) { log('打回失败:', e); }
+            safeSetInnerHTML(streamEl, markdownToHtml(summary) + '<div style="margin-top:14px;color:#f59e0b;font-size:13px;display:flex;align-items:center;gap:6px;"><div class="bse-spinner" style="width:14px;height:14px;border-width:2px;"></div>格式校验修正中...</div>');
+            messages.push({ role: 'assistant', content: summary }); messages.push({ role: 'user', content: '你没有正确输出广告时间。请输出一行：有广告输出"广告时间[MM:SS - MM:SS]"，没广告输出"广告时间[无]"。只输出这一行，不含其他任何内容。必须在同一行。' });
+            try { const fix = await callAPINoStream(messages); summary = summary + '\n' + fix.trim(); adCheck = extractAdSegments(summary); lastAdCheckResult = adCheck; safeSetInnerHTML(streamEl, markdownToHtml(summary)); } catch (e) {}
         }
-
-        setCachedSummary(currentVideoKey, summary);
-        logAPI('AI生成完成', { videoKey: currentVideoKey, 摘要长度: summary.length, 广告类型: adCheck.type });
-
-        aiConversationHistory = [
-            { role: 'user', content: AI_SUMMARY_PROMPT },
-            { role: 'assistant', content: summary }
-        ];
-
-        adSegments = adCheck.segments;
-        if (adSegments.length > 0) {
-            initProgressMark();
-            initAdSkipMonitor();
-        }
-
-        return summary;
+        setCachedSummary(currentVideoKey, summary); aiConversationHistory = [{ role: 'user', content: AI_SUMMARY_PROMPT }, { role: 'assistant', content: summary }];
+        adSegments = adCheck.segments; if (adSegments.length > 0) { initProgressMark(); initAdSkipMonitor(); } return summary;
     }
 
     // ===================== 15. 核心工作流 =====================
     async function fetchAllSubtitles(force = false) {
-        const vk = window.location.href;
-        if (!force && vk === currentVideoKey && allSubtitles.length > 0) return;
-
-        logAPI('字幕获取开始', { videoKey: vk, 强制刷新: force });
-        currentVideoKey = vk;
-        allSubtitles = [];
-        currentSubtitleData = null;
-        selectedSubtitleId = null;
-        adSegments = [];
-        hasJumpedAds = {};
-        lastAdCheckResult = null;
-        progressMarkInitialized = false;
-
-        const existingMark = document.getElementById('bse-ad-progress-mark');
-        if (existingMark) existingMark.remove();
-
+        const vk = window.location.href; if (!force && vk === currentVideoKey && allSubtitles.length > 0) return;
+        currentVideoKey = vk; allSubtitles = []; currentSubtitleData = null; selectedSubtitleId = null; adSegments = []; hasJumpedAds = {}; lastAdCheckResult = null; progressMarkInitialized = false; hotComments = [];
+        const existingMark = document.getElementById('bse-ad-progress-mark'); if (existingMark) existingMark.remove();
         setLoadingState(true);
-        try {
-            allSubtitles = await fetchBilibiliSubtitles();
-            if (allSubtitles.length > 0) {
-                await loadSubtitle(allSubtitles[0]);
-            } else {
-                updateUI();
-                updateContent();
-            }
-        } catch (e) {
-            logAPI('字幕获取出错', { 错误: e.message });
-            updateUI();
-            updateContent();
-        }
+        try { allSubtitles = await fetchBilibiliSubtitles(); const commentPromise = fetchHotComments(); if (allSubtitles.length > 0) await loadSubtitle(allSubtitles[0]); else { updateUI(); updateContent(); } hotComments = await commentPromise; updateUI(); } catch (e) { updateUI(); updateContent(); }
         setLoadingState(false);
     }
-
     async function loadSubtitle(sub) {
-        if (!sub) return;
-
-        // 幂等保护：若已加载同一字幕且数据就绪，直接返回
-        if (selectedSubtitleId === sub.id && currentSubtitleData?.body?.length > 0) {
-            log('字幕已加载，跳过重复加载', { id: sub.id });
-            return;
-        }
-
-        selectedSubtitleId = sub.id;
-
-        // 清除之前排队的自动生成定时器
-        if (autoGenerateTimer) {
-            clearTimeout(autoGenerateTimer);
-            autoGenerateTimer = null;
-            log('清除自动生成定时器');
-        }
-
-        const afterLoad = () => {
-            if (autoOpenPanel && !panelVisible) {
-                panelVisible = true;
-                document.querySelector('.bse-panel').classList.add('show');
-                switchTab(autoOpenTab);
-            }
-
-            // 自动生成：仅在未锁定、无缓存时才排入定时器
-            if (autoGenSummary && currentSubtitleData?.body?.length && !getCachedSummary(currentVideoKey) && API_KEY && !isGeneratingAI) {
-                logAPI('自动生成定时器已设置', { 延迟ms: 400 });
-                autoGenerateTimer = setTimeout(() => {
-                    autoGenerateTimer = null;
-                    if (isGeneratingAI) { log('自动生成取消：已有生成进行中'); return; }
-                    switchTab('ai');
-                    setTimeout(() => {
-                        const btn = document.getElementById('bse-generate-btn');
-                        if (btn && !isGeneratingAI) {
-                            logAPI('自动生成：点击生成按钮');
-                            btn.click();
-                        }
-                    }, 50);
-                }, 400);
-            }
-        };
-
-        if (sub.body?.length > 0) {
-            currentSubtitleData = sub;
-            updateUI();
-            updateContent();
-            afterLoad();
-            return;
-        }
-
-        setLoadingState(true);
-        sub.body = await fetchSubtitleContent(sub.subtitle_url);
-        currentSubtitleData = sub;
-        setLoadingState(false);
-        updateUI();
-        updateContent();
-        afterLoad();
+        if (!sub) return; if (selectedSubtitleId === sub.id && currentSubtitleData?.body?.length > 0) return; selectedSubtitleId = sub.id; if (autoGenerateTimer) { clearTimeout(autoGenerateTimer); autoGenerateTimer = null; }
+        const afterLoad = () => { if (autoOpenPanel && !panelVisible) { panelVisible = true; document.querySelector('.bse-panel').classList.add('show'); switchTab(autoOpenTab); } if (autoGenSummary && currentSubtitleData?.body?.length && !getCachedSummary(currentVideoKey) && API_KEY && !isGeneratingAI) { autoGenerateTimer = setTimeout(() => { autoGenerateTimer = null; if (isGeneratingAI) return; switchTab('ai'); setTimeout(() => { const btn = document.getElementById('bse-generate-btn'); if (btn && !isGeneratingAI) btn.click(); }, 50); }, 400); } };
+        if (sub.body?.length > 0) { currentSubtitleData = sub; updateUI(); updateContent(); afterLoad(); return; }
+        setLoadingState(true); sub.body = await fetchSubtitleContent(sub.subtitle_url); currentSubtitleData = sub; setLoadingState(false); updateUI(); updateContent(); afterLoad();
     }
-
-    function switchTab(tab) {
-        currentTab = tab;
-        const tabsEl = document.querySelector('.bse-tabs');
-        if (tabsEl) tabsEl.classList.toggle('hidden', tab === 'settings');
-        document.querySelectorAll('.bse-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-        updateContent();
-    }
+    function switchTab(tab) { currentTab = tab; const tabsEl = document.querySelector('.bse-tabs'); if (tabsEl) tabsEl.classList.toggle('hidden', tab === 'settings'); document.querySelectorAll('.bse-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab)); updateContent(); }
 
     // ===================== 16. UI 创建与事件 =====================
     function createUI() {
-        if (document.querySelector('.bse-container')) return;
-        const c = document.createElement('div');
-        c.className = 'bse-container';
+        if (document.querySelector('.bse-container')) return; const c = document.createElement('div'); c.className = 'bse-container';
         safeSetInnerHTML(c, `
-            <button class="bse-trigger-btn" title="B站字幕AI工具">
-                <svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6zm10 0h2v2h-2zm-6-4h8v2h-8z"/></svg>
-                <span class="bse-status-dot"></span>
-            </button>
+            <button class="bse-trigger-btn" title="B站字幕AI工具"><svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6zm10 0h2v2h-2zm-6-4h8v2h-8z"/></svg><span class="bse-status-dot"></span></button>
             <div class="bse-panel">
-                <div class="bse-header">
-                    <div>
-                        <div class="bse-title">B站字幕获取、AI分析及广告跳过 <span class="bse-platform-tag">BiliBili</span></div>
-                        <div class="bse-subtitle-info">点击刷新</div>
-                        <div class="bse-ad-hint">广告跳过功能仅在进行AI分析后可用</div>
-                    </div>
-                    <div class="bse-header-actions">
-                        <button class="bse-icon-btn" id="bse-refresh-btn" title="刷新">
-                            <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-                        </button>
-                        <button class="bse-icon-btn settings-btn" id="bse-settings-btn" title="设置">
-                            <svg viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
-                        </button>
-                    </div>
-                </div>
-                <div class="bse-api-warning-container">
-                    ${!API_KEY ? `
-                    <div class="bse-api-warning">
-                        <span class="bse-api-warning-icon">⚠</span>
-                        <span class="bse-api-warning-text">未设置API密钥，AI分析功能将无法使用</span>
-                        <button class="bse-api-warning-btn" id="bse-go-settings">去设置</button>
-                    </div>
-                    ` : ''}
-                </div>
-                <div class="bse-source-section">
-                    <div class="bse-source-header" id="bse-source-toggle">
-                        <span class="bse-source-label">选择字幕</span>
-                        <span class="bse-source-arrow collapsed" id="bse-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span>
-                    </div>
-                    <div class="bse-source-body hidden" id="bse-source-body"><div style="color:var(--bse-text-dim);font-size:13px;">暂无数据</div></div>
-                </div>
-                <div class="bse-tabs">
-                    <button class="bse-tab active" data-tab="preview">浏览</button>
-                    <button class="bse-tab" data-tab="ai">AI 分析</button>
-                    <button class="bse-tab" data-tab="text">文本</button>
-                </div>
+                <div class="bse-header"><div><div class="bse-title">B站字幕获取、AI分析及广告跳过 <span class="bse-platform-tag">BiliBili</span></div><div class="bse-subtitle-info">点击刷新</div><div class="bse-ad-hint">广告跳过功能仅在进行AI分析后可用</div></div><div class="bse-header-actions"><button class="bse-icon-btn" id="bse-refresh-btn" title="刷新"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button><button class="bse-icon-btn settings-btn" id="bse-settings-btn" title="设置"><svg viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg></button></div></div>
+                <div class="bse-api-warning-container">${!API_KEY ? `<div class="bse-api-warning"><span class="bse-api-warning-icon">⚠</span><span class="bse-api-warning-text">未设置API密钥，AI分析功能将无法使用</span><button class="bse-api-warning-btn" id="bse-go-settings">去设置</button></div>` : ''}</div>
+                <div class="bse-source-section"><div class="bse-source-header" id="bse-source-toggle"><span class="bse-source-label">选择字幕</span><span class="bse-source-arrow collapsed" id="bse-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bse-source-body hidden" id="bse-source-body"><div style="color:var(--bse-text-dim);font-size:13px;">暂无数据</div></div></div>
+                <div class="bse-tabs"><button class="bse-tab active" data-tab="preview">浏览</button><button class="bse-tab" data-tab="ai">AI 分析</button><button class="bse-tab" data-tab="text">文本</button></div>
                 <div class="bse-content"><div class="bse-empty">正在初始化...</div></div>
-                <div class="bse-footer">
-                    <button class="bse-btn bse-btn-secondary" id="bse-download-txt-btn" disabled>
-                        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>TXT
-                    </button>
-                    <button class="bse-btn bse-btn-secondary" id="bse-download-srt-btn" disabled>
-                        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>SRT
-                    </button>
-                    <button class="bse-btn bse-btn-primary" id="bse-copy-btn" disabled>
-                        <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制全部
-                    </button>
-                </div>
+                <div class="bse-footer"><button class="bse-btn bse-btn-secondary" id="bse-download-txt-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>TXT</button><button class="bse-btn bse-btn-secondary" id="bse-download-srt-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>SRT</button><button class="bse-btn bse-btn-primary" id="bse-copy-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制全部</button></div>
             </div>
         `);
-        document.body.appendChild(c);
-        bindEvents(c);
+        document.body.appendChild(c); bindEvents(c);
     }
-
     function bindEvents(c) {
         const panel = c.querySelector('.bse-panel');
-
-        c.querySelector('.bse-trigger-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            panelVisible = !panelVisible;
-            panel.classList.toggle('show', panelVisible);
-            if (panelVisible && allSubtitles.length === 0) fetchAllSubtitles();
-        });
-
-        document.addEventListener('click', e => {
-            if (!panelVisible) return;
-            if (!c.contains(e.target)) { panelVisible = false; panel.classList.remove('show'); }
-        });
-
-        c.querySelector('#bse-source-toggle').addEventListener('click', () => {
-            sourceCollapsed = !sourceCollapsed;
-            c.querySelector('#bse-source-body').classList.toggle('hidden', sourceCollapsed);
-            c.querySelector('#bse-source-arrow').classList.toggle('collapsed', sourceCollapsed);
-        });
-
+        c.querySelector('.bse-trigger-btn').addEventListener('click', (e) => { e.stopPropagation(); panelVisible = !panelVisible; panel.classList.toggle('show', panelVisible); if (panelVisible && allSubtitles.length === 0) fetchAllSubtitles(); });
+        document.addEventListener('click', e => { if (!panelVisible) return; if (!c.contains(e.target)) { panelVisible = false; panel.classList.remove('show'); } });
+        c.querySelector('#bse-source-toggle').addEventListener('click', () => { sourceCollapsed = !sourceCollapsed; c.querySelector('#bse-source-body').classList.toggle('hidden', sourceCollapsed); c.querySelector('#bse-source-arrow').classList.toggle('collapsed', sourceCollapsed); });
         c.querySelectorAll('.bse-tab').forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
-
-        c.querySelector('#bse-refresh-btn').addEventListener('click', e => {
-            e.stopPropagation();
-            if (!isLoading) fetchAllSubtitles(true);
-        });
-
-        c.querySelector('#bse-settings-btn').addEventListener('click', e => {
-            e.stopPropagation();
-            switchTab(currentTab === 'settings' ? 'preview' : 'settings');
-        });
-
-        c.querySelector('#bse-go-settings')?.addEventListener('click', e => {
-            e.stopPropagation();
-            switchTab('settings');
-        });
-
-        c.querySelector('#bse-copy-btn').addEventListener('click', () => {
-            const t = getFormattedText();
-            if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); }
-        });
-
-        c.querySelector('#bse-download-txt-btn').addEventListener('click', () => {
-            const t = getFormattedText();
-            if (t) {
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(new Blob([t], { type: 'text/plain;charset=utf-8' }));
-                a.download = `Subtitle_${Date.now()}.txt`; a.click();
-                showToast('✓ TXT下载成功', 'success');
-            }
-        });
-
-        c.querySelector('#bse-download-srt-btn').addEventListener('click', () => {
-            const t = getSRTText();
-            if (t) {
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(new Blob([t], { type: 'text/plain;charset=utf-8' }));
-                a.download = `Subtitle_${Date.now()}.srt`; a.click();
-                showToast('✓ SRT下载成功', 'success');
-            }
-        });
+        c.querySelector('#bse-refresh-btn').addEventListener('click', e => { e.stopPropagation(); if (!isLoading) fetchAllSubtitles(true); });
+        c.querySelector('#bse-settings-btn').addEventListener('click', e => { e.stopPropagation(); switchTab(currentTab === 'settings' ? 'preview' : 'settings'); });
+        c.querySelector('#bse-go-settings')?.addEventListener('click', e => { e.stopPropagation(); switchTab('settings'); });
+        c.querySelector('#bse-copy-btn').addEventListener('click', () => { const t = getFormattedText(); if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); } });
+        c.querySelector('#bse-download-txt-btn').addEventListener('click', () => { const t = getFormattedText(); if (t) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/plain;charset=utf-8' })); a.download = `Subtitle_${Date.now()}.txt`; a.click(); showToast('✓ TXT下载成功', 'success'); } });
+        c.querySelector('#bse-download-srt-btn').addEventListener('click', () => { const t = getSRTText(); if (t) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'text/plain;charset=utf-8' })); a.download = `Subtitle_${Date.now()}.srt`; a.click(); showToast('✓ SRT下载成功', 'success'); } });
     }
 
     // ===================== 17. 文本格式化 =====================
-    function getFormattedText() {
-        if (!currentSubtitleData?.body) return '';
-        return currentSubtitleData.body.map(it =>
-            showTimestamps ? `[${formatTimeWithMs(it.from)} - ${formatTimeWithMs(it.to)}] ${it.content}` : it.content
-        ).join('\n');
-    }
-
-    function getSRTText() {
-        if (!currentSubtitleData?.body) return '';
-        return currentSubtitleData.body.map((it, index) =>
-            `${index + 1}\n${formatTimeForSRT(it.from)} --> ${formatTimeForSRT(it.to)}\n${it.content}\n`
-        ).join('\n');
-    }
-
-    function getTimestampedTextForAI() {
-        if (!currentSubtitleData?.body) return '';
-        return currentSubtitleData.body.map(it => `[${formatTime(it.from)} - ${formatTime(it.to)}] ${it.content}`).join('\n');
-    }
+    function getFormattedText() { if (!currentSubtitleData?.body) return ''; return currentSubtitleData.body.map(it => showTimestamps ? `[${formatTimeWithMs(it.from)} - ${formatTimeWithMs(it.to)}] ${it.content}` : it.content).join('\n'); }
+    function getSRTText() { if (!currentSubtitleData?.body) return ''; return currentSubtitleData.body.map((it, index) => `${index + 1}\n${formatTimeForSRT(it.from)} --> ${formatTimeForSRT(it.to)}\n${it.content}\n`).join('\n'); }
+    function getTimestampedTextForAI() { if (!currentSubtitleData?.body) return ''; return currentSubtitleData.body.map(it => `[${formatTime(it.from)} - ${formatTime(it.to)}] ${it.content}`).join('\n'); }
 
     // ===================== 18. UI 状态更新 =====================
     function updateUI() {
-        const dot = document.querySelector('.bse-status-dot');
-        const info = document.querySelector('.bse-subtitle-info');
-        const copyBtn = document.querySelector('#bse-copy-btn');
-        const dlTxtBtn = document.querySelector('#bse-download-txt-btn');
-        const dlSrtBtn = document.querySelector('#bse-download-srt-btn');
-        const sb = document.querySelector('#bse-source-body');
-
-        if (sb) {
-            if (allSubtitles.length > 0) {
-                safeSetInnerHTML(sb, allSubtitles.map(s => `
-                    <div class="bse-subtitle-option ${s.id === selectedSubtitleId ? 'active' : ''}" data-id="${s.id}">
-                        ${s.lan_doc}<span class="bse-tag ${s.isAI ? 'ai' : 'cc'}">${s.isAI ? 'AI' : 'CC'}</span>
-                    </div>`).join(''));
-                sb.querySelectorAll('.bse-subtitle-option').forEach(o => {
-                    o.addEventListener('click', () => {
-                        const s = allSubtitles.find(x => x.id == o.dataset.id);
-                        if (s) loadSubtitle(s);
-                    });
-                });
-            } else {
-                safeSetInnerHTML(sb, '<div style="color:var(--bse-text-dim);font-size:13px;padding-bottom:4px;">未检测到可用的中文字幕</div>');
-            }
-        }
-
-        if (currentSubtitleData?.body) {
-            dot?.classList.add('ready'); dot?.classList.remove('loading');
-            if (info) info.textContent = `成功解析 ${currentSubtitleData.body.length} 条数据`;
-            if (copyBtn) copyBtn.disabled = false;
-            if (dlTxtBtn) dlTxtBtn.disabled = false;
-            if (dlSrtBtn) dlSrtBtn.disabled = false;
-        } else if (!isLoading) {
-            dot?.classList.remove('ready', 'loading');
-            if (info) info.textContent = allSubtitles.length === 0 ? '此视频暂无字幕' : '准备就绪';
-        }
+        const dot = document.querySelector('.bse-status-dot'); const info = document.querySelector('.bse-subtitle-info'); const copyBtn = document.querySelector('#bse-copy-btn'); const dlTxtBtn = document.querySelector('#bse-download-txt-btn'); const dlSrtBtn = document.querySelector('#bse-download-srt-btn'); const sb = document.querySelector('#bse-source-body');
+        if (sb) { if (allSubtitles.length > 0) { safeSetInnerHTML(sb, allSubtitles.map(s => `<div class="bse-subtitle-option ${s.id === selectedSubtitleId ? 'active' : ''}" data-id="${s.id}">${s.lan_doc}<span class="bse-tag ${s.isAI ? 'ai' : 'cc'}">${s.isAI ? 'AI' : 'CC'}</span></div>`).join('')); sb.querySelectorAll('.bse-subtitle-option').forEach(o => o.addEventListener('click', () => { const s = allSubtitles.find(x => x.id == o.dataset.id); if (s) loadSubtitle(s); })); } else { safeSetInnerHTML(sb, '<div style="color:var(--bse-text-dim);font-size:13px;padding-bottom:4px;">未检测到可用的中文字幕</div>'); } }
+        if (currentSubtitleData?.body) { dot?.classList.add('ready'); dot?.classList.remove('loading'); if (info) info.textContent = `成功解析 ${currentSubtitleData.body.length} 条字幕 ${hotComments.length} 条评论`; if (copyBtn) copyBtn.disabled = false; if (dlTxtBtn) dlTxtBtn.disabled = false; if (dlSrtBtn) dlSrtBtn.disabled = false; } else if (!isLoading) { dot?.classList.remove('ready', 'loading'); if (info) info.textContent = allSubtitles.length === 0 ? '此视频暂无字幕' : '准备就绪'; }
     }
-
-    function updateContent() {
-        const el = document.querySelector('.bse-content');
-        if (!el) return;
-        if (isLoading) {
-            safeSetInnerHTML(el, '<div class="bse-loading"><div class="bse-spinner"></div><div>数据加载中...</div></div>');
-            return;
-        }
-        switch (currentTab) {
-            case 'preview': renderPreviewTab(el); break;
-            case 'ai': renderAITab(el); break;
-            case 'text': renderTextTab(el); break;
-            case 'settings': renderSettingsTab(el); break;
-        }
-    }
+    function updateContent() { const el = document.querySelector('.bse-content'); if (!el) return; if (isLoading) { safeSetInnerHTML(el, '<div class="bse-loading"><div class="bse-spinner"></div><div>数据加载中...</div></div>'); return; } switch (currentTab) { case 'preview': renderPreviewTab(el); break; case 'ai': renderAITab(el); break; case 'text': renderTextTab(el); break; case 'settings': renderSettingsTab(el); break; } }
 
     // ===================== 19. 浏览页渲染 =====================
     function renderPreviewTab(el) {
-        if (!currentSubtitleData?.body?.length) {
-            safeSetInnerHTML(el, '<div class="bse-empty">未获取到字幕，点击刷新以重试</div>');
-            return;
-        }
-        const body = currentSubtitleData.body, cnt = body.length, dur = body[cnt - 1].to;
-        const chars = body.reduce((s, i) => s + i.content.length, 0);
-        safeSetInnerHTML(el, `
-            <div class="bse-stats">
-                <div class="bse-stat-item"><div class="bse-stat-label">总条数</div><div class="bse-stat-value">${cnt}</div></div>
-                <div class="bse-stat-item"><div class="bse-stat-label">总时长</div><div class="bse-stat-value">${formatTime(dur)}</div></div>
-                <div class="bse-stat-item"><div class="bse-stat-label">总字数</div><div class="bse-stat-value">${chars}</div></div>
-            </div>
-            ${body.slice(0, 1000).map(it => `<div class="bse-subtitle-item" data-time="${it.from}"><div class="bse-ts">${formatTime(it.from)} → ${formatTime(it.to)}</div><div class="bse-st">${it.content}</div></div>`).join('')}
-            ${body.length > 1000 ? '<div style="text-align:center;color:var(--bse-text-muted);padding:14px;font-size:13px;">仅展示前1000条</div>' : ''}
-        `);
-        el.querySelectorAll('.bse-subtitle-item').forEach(item => {
-            item.addEventListener('click', () => seekToTime(parseFloat(item.dataset.time)));
-        });
+        if (!currentSubtitleData?.body?.length) { safeSetInnerHTML(el, '<div class="bse-empty">未获取到字幕，点击刷新以重试</div>'); return; }
+        const body = currentSubtitleData.body, cnt = body.length, dur = body[cnt - 1].to; const chars = body.reduce((s, i) => s + i.content.length, 0);
+        safeSetInnerHTML(el, `<div class="bse-stats"><div class="bse-stat-item"><div class="bse-stat-label">总条数</div><div class="bse-stat-value">${cnt}</div></div><div class="bse-stat-item"><div class="bse-stat-label">总时长</div><div class="bse-stat-value">${formatTime(dur)}</div></div><div class="bse-stat-item"><div class="bse-stat-label">总字数</div><div class="bse-stat-value">${chars}</div></div></div>${body.slice(0, 1000).map(it => `<div class="bse-subtitle-item" data-time="${it.from}"><div class="bse-ts">${formatTime(it.from)} → ${formatTime(it.to)}</div><div class="bse-st">${it.content}</div></div>`).join('')}${body.length > 1000 ? '<div style="text-align:center;color:var(--bse-text-muted);padding:14px;font-size:13px;">仅展示前1000条</div>' : ''}`);
+        el.querySelectorAll('.bse-subtitle-item').forEach(item => item.addEventListener('click', () => seekToTime(parseFloat(item.dataset.time))));
     }
 
     // ===================== 20. AI 分析页渲染 =====================
     function renderAITab(el) {
-        const hasSubtitle = !!(currentSubtitleData?.body?.length);
-        const cachedSummary = getCachedSummary(currentVideoKey);
-        const cachedQA = getCachedQA(currentVideoKey);
-
-        // 从缓存恢复对话历史
-        if (cachedSummary && cachedQA.length && aiConversationHistory.length < 2) {
-            aiConversationHistory = [
-                { role: 'user', content: AI_SUMMARY_PROMPT },
-                { role: 'assistant', content: cachedSummary },
-                ...cachedQA.flatMap(qa => [{ role: 'user', content: qa.q }, { role: 'assistant', content: qa.a }])
-            ];
-        }
-
+        const hasSubtitle = !!(currentSubtitleData?.body?.length); const cachedSummary = getCachedSummary(currentVideoKey); const cachedQA = getCachedQA(currentVideoKey);
+        if (cachedSummary && cachedQA.length && aiConversationHistory.length < 2) aiConversationHistory = [{ role: 'user', content: AI_SUMMARY_PROMPT }, { role: 'assistant', content: cachedSummary }, ...cachedQA.flatMap(qa => [{ role: 'user', content: qa.q }, { role: 'assistant', content: qa.a }])];
         let html = '';
-
         if (!cachedSummary) {
-            html += `<button class="bse-ai-big-btn" id="bse-generate-btn" ${!hasSubtitle || !API_KEY || isGeneratingAI ? 'disabled' : ''}>
-                <svg viewBox="0 0 24 24" width="20" height="20" style="fill:white"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                ${isGeneratingAI ? '生成中...' : '生成总结并分析广告'}
-            </button>`;
-            if (!hasSubtitle) {
-                html += '<div class="bse-empty" style="padding:40px 20px;">请先获取字幕数据</div>';
-            } else if (!API_KEY) {
-                html += '<div class="bse-empty" style="padding:40px 20px;">请先在设置中配置API密钥</div>';
-            }
+            html += `<button class="bse-ai-big-btn" id="bse-generate-btn" ${!hasSubtitle || !API_KEY || isGeneratingAI ? 'disabled' : ''}><svg viewBox="0 0 24 24" width="20" height="20" style="fill:white"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>${isGeneratingAI ? '生成中...' : 'AI分析'}</button>`;
+            if (!hasSubtitle) html += '<div class="bse-empty" style="padding:40px 20px;">请先获取字幕数据</div>'; else if (!API_KEY) html += '<div class="bse-empty" style="padding:40px 20px;">请先在设置中配置API密钥</div>';
         } else {
             const retryHtml = `<button class="bse-retry-btn" id="bse-retry-btn" title="重新生成" ${isGeneratingAI ? 'disabled' : ''}><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>`;
-
-            if (showRawAIText) {
-                html += `<div style="position:relative;">${retryHtml}<textarea class="bse-text-area" readonly style="min-height:380px;font-family:monospace;font-size:13px;padding-top:20px;">${escapeHtml(cachedSummary)}</textarea></div>`;
-            } else {
-                const adData = lastAdCheckResult || extractAdSegments(cachedSummary);
-                if (!lastAdCheckResult) {
-                    lastAdCheckResult = adData;
-                    logAPI('广告检测(渲染时首次解析)', { 类型: adData.type, 段数: adData.segments.length });
-                } else {
-                    logAPI('广告检测(使用缓存结果)', { 类型: adData.type, 段数: adData.segments.length });
-                }
-                adSegments = adData.segments;
-
-                if (adSegments.length > 0) {
-                    initProgressMark();
-                }
-
-                if (adData.type === 'has_ad' && adSegments.length > 0) {
-                    html += `<div class="bse-sp-box status-found">
-                        <div class="bse-sp-header">
-                            <span class="bse-sp-icon">!</span>
-                            <span class="bse-sp-title">检测到视频植入广告</span>
-                            <span class="bse-sp-badge">${adSegments[0].startStr} - ${adSegments[0].endStr}</span>
-                            <button class="bse-sp-skip" data-end="${adSegments[0].end}">立即跳过</button>
-                        </div>
-                        <div class="bse-sp-hint">进度条已标黄提示，将自动跳过</div>
-                    </div>`;
-                } else if (adData.type === 'none') {
-                    html += `<div class="bse-sp-box status-none"><div class="bse-sp-header"><span class="bse-sp-icon">✓</span><span class="bse-sp-title">未检测到视频植入广告</span></div></div>`;
-                } else {
-                    html += `<div class="bse-sp-box status-err"><div class="bse-sp-header"><span class="bse-sp-icon">⚠</span><span class="bse-sp-title">广告时间段格式解析异常</span></div></div>`;
-                }
-
+            if (showRawAIText) { html += `<div style="position:relative;">${retryHtml}<textarea class="bse-text-area" readonly style="min-height:380px;font-family:monospace;font-size:13px;padding-top:20px;">${escapeHtml(cachedSummary)}</textarea></div>`; }
+            else {
+                const adData = lastAdCheckResult || extractAdSegments(cachedSummary); if (!lastAdCheckResult) lastAdCheckResult = adData; adSegments = adData.segments; if (adSegments.length > 0) initProgressMark();
+                if (adData.type === 'has_ad' && adSegments.length > 0) html += `<div class="bse-sp-box status-found"><div class="bse-sp-header"><span class="bse-sp-icon">!</span><span class="bse-sp-title">检测到视频植入广告</span><span class="bse-sp-badge">${adSegments[0].startStr} - ${adSegments[0].endStr}</span><button class="bse-sp-skip" data-end="${adSegments[0].end}">立即跳过</button></div><div class="bse-sp-hint">进度条已标黄提示，将自动跳过</div></div>`;
+                else if (adData.type === 'none') html += `<div class="bse-sp-box status-none"><div class="bse-sp-header"><span class="bse-sp-icon">✓</span><span class="bse-sp-title">未检测到视频植入广告</span></div></div>`;
+                else html += `<div class="bse-sp-box status-err"><div class="bse-sp-header"><span class="bse-sp-icon">⚠</span><span class="bse-sp-title">广告时间段格式解析异常</span></div></div>`;
                 const displaySummary = stripAdLine(cachedSummary);
-
-                html += `<div style="position:relative;">${retryHtml}
-                    <div class="bse-ai-result bse-markdown" id="bse-ai-result">${markdownToHtml(displaySummary)}</div>
-                </div>`;
-
-                if (cachedQA.length) {
-                    html += cachedQA.map(qa => `
-                        <div class="bse-qa-item">
-                            <div class="bse-qa-q">💭 ${escapeHtml(qa.q)}</div>
-                            <div class="bse-qa-a bse-markdown">${markdownToHtml(qa.a)}</div>
-                        </div>`).join('');
-                }
-
-                html += `<div class="bse-followup-section">
-                    <div class="bse-followup-label">
-                        <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
-                        追问
-                    </div>
-                    <textarea class="bse-followup-input" id="bse-followup-input" placeholder="就视频内容提问" ${isGeneratingAI ? 'disabled' : ''}></textarea>
-                    <button class="bse-followup-btn" id="bse-followup-btn" ${isGeneratingAI ? 'disabled' : ''}>${isGeneratingAI ? '生成中...' : '发送追问'}</button>
-                </div>`;
+                html += `<div style="position:relative;">${retryHtml}<div class="bse-ai-result bse-markdown" id="bse-ai-result">${markdownToHtml(displaySummary)}</div></div>`;
+                if (cachedQA.length) html += cachedQA.map(qa => `<div class="bse-qa-item"><div class="bse-qa-q">💭 ${escapeHtml(qa.q)}</div><div class="bse-qa-a bse-markdown">${markdownToHtml(qa.a)}</div></div>`).join('');
+                html += `<div class="bse-followup-section"><div class="bse-followup-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>追问</div><textarea class="bse-followup-input" id="bse-followup-input" placeholder="就视频内容提问" ${isGeneratingAI ? 'disabled' : ''}></textarea><button class="bse-followup-btn" id="bse-followup-btn" ${isGeneratingAI ? 'disabled' : ''}>${isGeneratingAI ? '生成中...' : '发送追问'}</button></div>`;
             }
-
-            html += `<div style="display:flex;justify-content:flex-end;margin-top:16px;">
-                <label class="bse-checkbox-label" style="font-size:13px;color:var(--bse-text-muted);">
-                    <input type="checkbox" id="bse-raw-toggle" ${showRawAIText ? 'checked' : ''}>显示原始返回文本
-                </label>
-            </div>`;
+            html += `<div style="display:flex;justify-content:flex-end;margin-top:16px;"><label class="bse-checkbox-label" style="font-size:13px;color:var(--bse-text-muted);"><input type="checkbox" id="bse-raw-toggle" ${showRawAIText ? 'checked' : ''}>显示原始返回文本</label></div>`;
         }
-
         safeSetInnerHTML(el, html);
-
-        // ---- 生成/重试按钮逻辑 ----
-        async function doGenerate(e) {
-            if (e) e.stopPropagation();
-
-            // 并发守卫
-            if (isGeneratingAI) {
-                logAPI('生成请求拒绝', { 原因: '已有生成进行中' });
-                return;
-            }
-
-            if (!hasSubtitle || !API_KEY) return;
-
-            // 清除缓存，准备重新生成
-            if (aiSummaryCache[currentVideoKey]) {
-                delete aiSummaryCache[currentVideoKey];
-                aiConversationHistory = [];
-                GM_setValue('aiSummaryCache', aiSummaryCache);
-                logAPI('缓存清除(重新生成)', { key: currentVideoKey });
-            }
-
-            // 重置广告检测缓存
-            lastAdCheckResult = null;
-
-            // 锁定 + 递增代次ID
-            isGeneratingAI = true;
-            const myGenerationId = ++currentGenerationId;
-
-            logAPI('=== 开始AI生成 ===', {
-                代次ID: myGenerationId,
-                videoKey: currentVideoKey
-            });
-
-            // 禁用按钮
-            const genBtn = document.getElementById('bse-generate-btn');
-            const retryBtn = document.getElementById('bse-retry-btn');
-            if (genBtn) genBtn.disabled = true;
-            if (retryBtn) retryBtn.disabled = true;
-
-            safeSetInnerHTML(el, `<div class="bse-ai-result bse-markdown" id="bse-stream-body" style="min-height:400px;overflow-y:auto;"><div class="bse-loading"><div class="bse-spinner"></div><div>生成中...</div></div></div>`);
-
-            const streamEl = document.getElementById('bse-stream-body');
-            try {
-                await generateAISummaryStream(getTimestampedTextForAI(), streamEl);
-
-                // 代次检查
-                if (myGenerationId !== currentGenerationId) {
-                    logAPI('生成代次已过期，放弃渲染', { myGenerationId, currentGenerationId });
-                    return;
-                }
-
-                if (currentTab === 'ai') {
-                    renderAITab(el);
-                    el.scrollTop = 0;
-                }
-                showToast('✓ 解析完成', 'success');
-            } catch (e) {
-                if (myGenerationId !== currentGenerationId) return;
-
-                logAPI('生成失败', { 错误: e.message });
-                showToast(`✗ 失败: ${e.message}`, 'error');
-                delete aiSummaryCache[currentVideoKey];
-                GM_setValue('aiSummaryCache', aiSummaryCache);
-                if (currentTab === 'ai') renderAITab(el);
-            } finally {
-                // 仅当前代次才解锁
-                if (myGenerationId === currentGenerationId) {
-                    isGeneratingAI = false;
-                    logAPI('生成锁已释放', { 代次ID: myGenerationId });
-                }
-            }
-        }
-
-        document.getElementById('bse-generate-btn')?.addEventListener('click', doGenerate);
-        document.getElementById('bse-retry-btn')?.addEventListener('click', doGenerate);
+        async function doGenerate(e) { if (e) e.stopPropagation(); if (isGeneratingAI) return; if (!hasSubtitle || !API_KEY) return; if (aiSummaryCache[currentVideoKey]) { delete aiSummaryCache[currentVideoKey]; aiConversationHistory = []; GM_setValue('aiSummaryCache', aiSummaryCache); } lastAdCheckResult = null; isGeneratingAI = true; const myGenerationId = ++currentGenerationId; const genBtn = document.getElementById('bse-generate-btn'); const retryBtn = document.getElementById('bse-retry-btn'); if (genBtn) genBtn.disabled = true; if (retryBtn) retryBtn.disabled = true; safeSetInnerHTML(el, `<div class="bse-ai-result bse-markdown" id="bse-stream-body" style="min-height:400px;overflow-y:auto;"><div class="bse-loading"><div class="bse-spinner"></div><div>生成中...</div></div></div>`); const streamEl = document.getElementById('bse-stream-body'); try { await generateAISummaryStream(getTimestampedTextForAI(), streamEl); if (myGenerationId !== currentGenerationId) return; if (currentTab === 'ai') { renderAITab(el); el.scrollTop = 0; } showToast('✓ 解析完成', 'success'); } catch (e) { if (myGenerationId !== currentGenerationId) return; showToast(`✗ 失败: ${e.message}`, 'error'); delete aiSummaryCache[currentVideoKey]; GM_setValue('aiSummaryCache', aiSummaryCache); if (currentTab === 'ai') renderAITab(el); } finally { if (myGenerationId === currentGenerationId) isGeneratingAI = false; } }
+        document.getElementById('bse-generate-btn')?.addEventListener('click', doGenerate); document.getElementById('bse-retry-btn')?.addEventListener('click', doGenerate);
         document.getElementById('bse-raw-toggle')?.addEventListener('change', e => { showRawAIText = e.target.checked; renderAITab(el); });
         el.querySelector('.bse-sp-skip')?.addEventListener('click', e => seekToTime(parseFloat(e.currentTarget.dataset.end)));
-
-        // ---- 追问逻辑 ----
         const fBtn = document.getElementById('bse-followup-btn'), fInput = document.getElementById('bse-followup-input');
-        if (fBtn && fInput) {
-            const send = async () => {
-                const q = fInput.value.trim();
-                if (!q) return;
-
-                if (isGeneratingAI) {
-                    showToast('请等待当前生成完成', 'warning');
-                    logAPI('追问请求拒绝', { 原因: '已有生成进行中' });
-                    return;
-                }
-
-                isGeneratingAI = true;
-                const myGenerationId = ++currentGenerationId;
-
-                logAPI('=== 追问开始 ===', { 代次ID: myGenerationId, 问题: q });
-
-                fBtn.disabled = true; fBtn.textContent = '思考中...'; fInput.disabled = true;
-                const followupSection = el.querySelector('.bse-followup-section');
-                const answerId = 'bse-ans-' + Date.now();
-                const qaEl = document.createElement('div');
-                qaEl.className = 'bse-qa-item';
-                safeSetInnerHTML(qaEl, `<div class="bse-qa-q">💭 ${escapeHtml(q)}</div><div class="bse-qa-a bse-markdown" id="${answerId}"><div style="display:flex;align-items:center;gap:8px;color:var(--bse-text-muted);"><span class="bse-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div></div>`);
-                followupSection.insertAdjacentElement('beforebegin', qaEl);
-                const ansEl = document.getElementById(answerId);
-
-                aiConversationHistory.push({ role: 'user', content: q });
-                try {
-                    const a = await callAPIStream(aiConversationHistory, text => {
-                        if (myGenerationId !== currentGenerationId) return;
-                        safeSetInnerHTML(ansEl, markdownToHtml(text));
-                    });
-
-                    if (myGenerationId !== currentGenerationId) return;
-
-                    aiConversationHistory.push({ role: 'assistant', content: a });
-                    appendCachedQA(currentVideoKey, q, a);
-                    fInput.value = '';
-                    showToast('✓ 回复完成', 'success');
-                } catch (e) {
-                    if (myGenerationId !== currentGenerationId) return;
-                    safeSetInnerHTML(ansEl, `<span style="color:#ef4444;">❌ 追问失败: ${e.message}</span>`);
-                    aiConversationHistory.pop();
-                    logAPI('追问失败', { 错误: e.message });
-                    showToast(`✗ 出错: ${e.message}`, 'error');
-                } finally {
-                    if (myGenerationId === currentGenerationId) {
-                        isGeneratingAI = false;
-                        fBtn.disabled = false; fBtn.textContent = '发送追问'; fInput.disabled = false; fInput.focus();
-                    }
-                }
-            };
-            fBtn.addEventListener('click', send);
-            fInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
-        }
+        if (fBtn && fInput) { const send = async () => { const q = fInput.value.trim(); if (!q) return; if (isGeneratingAI) { showToast('请等待当前生成完成', 'warning'); return; } isGeneratingAI = true; const myGenerationId = ++currentGenerationId; fBtn.disabled = true; fBtn.textContent = '思考中...'; fInput.disabled = true; const followupSection = el.querySelector('.bse-followup-section'); const answerId = 'bse-ans-' + Date.now(); const qaEl = document.createElement('div'); qaEl.className = 'bse-qa-item'; safeSetInnerHTML(qaEl, `<div class="bse-qa-q">💭 ${escapeHtml(q)}</div><div class="bse-qa-a bse-markdown" id="${answerId}"><div style="display:flex;align-items:center;gap:8px;color:var(--bse-text-muted);"><span class="bse-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div></div>`); followupSection.insertAdjacentElement('beforebegin', qaEl); const ansEl = document.getElementById(answerId); aiConversationHistory.push({ role: 'user', content: q }); try { const a = await callAPIStream(aiConversationHistory, text => { if (myGenerationId !== currentGenerationId) return; safeSetInnerHTML(ansEl, markdownToHtml(text)); }); if (myGenerationId !== currentGenerationId) return; aiConversationHistory.push({ role: 'assistant', content: a }); appendCachedQA(currentVideoKey, q, a); fInput.value = ''; showToast('✓ 回复完成', 'success'); } catch (e) { if (myGenerationId !== currentGenerationId) return; safeSetInnerHTML(ansEl, `<span style="color:#ef4444;">❌ 追问失败: ${e.message}</span>`); aiConversationHistory.pop(); showToast(`✗ 出错: ${e.message}`, 'error'); } finally { if (myGenerationId === currentGenerationId) { isGeneratingAI = false; fBtn.disabled = false; fBtn.textContent = '发送追问'; fInput.disabled = false; fInput.focus(); } } }; fBtn.addEventListener('click', send); fInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }); }
     }
 
     // ===================== 21. 文本页渲染 =====================
-    function renderTextTab(el) {
-        if (!currentSubtitleData?.body?.length) {
-            safeSetInnerHTML(el, '<div class="bse-empty">暂无数据</div>');
-            return;
-        }
-        safeSetInnerHTML(el, `
-            <div class="bse-text-controls">
-                <label class="bse-checkbox-label"><input type="checkbox" id="bse-ts-toggle" ${showTimestamps ? 'checked' : ''}>显示时间戳</label>
-                <span style="font-size:12px;color:var(--bse-text-muted);">${showTimestamps ? '格式:[MM:SS.ms]' : '纯文本'}</span>
-            </div>
-            <textarea class="bse-text-area" id="bse-text-out" readonly>${getFormattedText()}</textarea>
-        `);
-        document.getElementById('bse-ts-toggle')?.addEventListener('change', e => {
-            showTimestamps = e.target.checked;
-            document.getElementById('bse-text-out').value = getFormattedText();
-        });
-    }
+    function renderTextTab(el) { if (!currentSubtitleData?.body?.length) { safeSetInnerHTML(el, '<div class="bse-empty">暂无数据</div>'); return; } safeSetInnerHTML(el, `<div class="bse-text-controls"><label class="bse-checkbox-label"><input type="checkbox" id="bse-ts-toggle" ${showTimestamps ? 'checked' : ''}>显示时间戳</label><span style="font-size:12px;color:var(--bse-text-muted);">${showTimestamps ? '格式:[MM:SS.ms]' : '纯文本'}</span></div><textarea class="bse-text-area" id="bse-text-out" readonly>${getFormattedText()}</textarea>`); document.getElementById('bse-ts-toggle')?.addEventListener('change', e => { showTimestamps = e.target.checked; document.getElementById('bse-text-out').value = getFormattedText(); }); }
 
     // ===================== 22. 设置页渲染 =====================
     function renderSettingsTab(el) {
-        const pOptions = Object.keys(API_PLATFORMS).map(k =>
-            `<option value="${k}" ${bse_platform === k ? 'selected' : ''}>${API_PLATFORMS[k].name}</option>`
-        ).join('');
-
-        const tabOptions = Object.keys(TAB_OPTIONS).map(k =>
-            `<option value="${k}" ${autoOpenTab === k ? 'selected' : ''}>${TAB_OPTIONS[k]}</option>`
-        ).join('');
-
-        safeSetInnerHTML(el, `
-            <div style="padding:10px 0;">
-                <div class="bse-settings-block">
-                    <label class="bse-settings-block-label">API 平台</label>
-                    <select class="bse-settings-input" id="bse-s-platform">${pOptions}</select>
-                    <div style="margin-top:8px;">
-                        <a id="bse-s-link" href="#" target="_blank" style="font-size:12px;color:var(--bse-primary);text-decoration:none;">获取 API Key →</a>
-                    </div>
-                </div>
-                <div class="bse-settings-block" id="bse-url-wrapper" style="display: ${bse_platform === 'custom' ? 'block' : 'none'};">
-                    <label class="bse-settings-block-label">API URL Endpoint</label>
-                    <input type="text" class="bse-settings-input" id="bse-s-url" value="${escapeHtml(API_URL)}">
-                </div>
-                <div class="bse-settings-block">
-                    <label class="bse-settings-block-label">模型 (Model)</label>
-                    <select class="bse-settings-input" id="bse-s-model-select"></select>
-                    <input type="text" class="bse-settings-input" id="bse-s-model-custom" style="margin-top:8px;display:none;" placeholder="输入自定义模型名..." value="${escapeHtml(bse_model)}">
-                </div>
-                <div class="bse-settings-block">
-                    <label class="bse-settings-block-label">API Key</label>
-                    <input type="password" class="bse-settings-input" id="bse-s-key" value="${escapeHtml(API_KEY)}" placeholder="输入API Key..">
-                </div>
-                <div class="bse-settings-block" style="margin-top:24px;">
-                    <label class="bse-settings-check-row">
-                        <input type="checkbox" id="bse-s-auto" ${autoGenSummary ? 'checked' : ''}>
-                        <div class="bse-settings-check-text">
-                            <span class="bse-settings-check-title">自动 AI 分析</span>
-                            <span class="bse-settings-check-desc">开启后每次打开带字幕的视频将自动进行AI分析，可能消耗较多 Tokens。</span>
-                        </div>
-                    </label>
-                </div>
-                <div class="bse-settings-block" style="margin-top:16px;">
-                    <label class="bse-settings-check-row">
-                        <input type="checkbox" id="bse-s-auto-open" ${autoOpenPanel ? 'checked' : ''}>
-                        <div class="bse-settings-check-text">
-                            <span class="bse-settings-check-title">自动打开面板</span>
-                            <span class="bse-settings-check-desc">开启后自动打开面板。仅在有字幕的视频中生效。</span>
-                        </div>
-                    </label>
-                </div>
-                <div class="bse-settings-block" style="margin-top:16px;">
-                    <label class="bse-settings-block-label">自动打开面板时显示的标签页</label>
-                    <select class="bse-settings-input" id="bse-s-auto-tab" ${!autoOpenPanel ? 'disabled' : ''}>${tabOptions}</select>
-                </div>
-                <div style="margin-top:32px;display:flex;gap:12px;">
-                    <button class="bse-btn bse-btn-secondary" id="bse-s-cancel">取消</button>
-                    <button class="bse-btn bse-btn-primary" id="bse-s-save">保存设置</button>
-                </div>
-                <div class="bse-author-info">
-                    <p class="bse-author-text">作者: <a href="https://github.com/LiuMashiro" target="_blank" class="bse-author-link">LiuMashiro</a></p>
-                    <p class="bse-author-text" style="margin-top:8px;">字幕获取模块部分使用了M0M Chen的 视频字幕提取器Pro 代码（MIT）</p>
-                </div>
-            </div>
-        `);
-
-        const pSelect = document.getElementById('bse-s-platform');
-        const urlWrapper = document.getElementById('bse-url-wrapper');
-        const urlInput = document.getElementById('bse-s-url');
-        const mSelect = document.getElementById('bse-s-model-select');
-        const mCustom = document.getElementById('bse-s-model-custom');
-        const pLink = document.getElementById('bse-s-link');
-        const autoOpenCheckbox = document.getElementById('bse-s-auto-open');
-        const autoTabSelect = document.getElementById('bse-s-auto-tab');
-
-        function updateUIForPlatform(isInit = false) {
-            const plat = pSelect.value;
-            const pData = API_PLATFORMS[plat];
-            pLink.href = pData.link;
-            pLink.style.display = pData.link ? 'inline-block' : 'none';
-            urlWrapper.style.display = plat === 'custom' ? 'block' : 'none';
-            if (!isInit || plat !== 'custom') {
-                if (plat !== 'custom') urlInput.value = pData.url;
-            }
-            urlInput.disabled = plat !== 'custom';
-            const models = pData.models;
-            mSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
-            if (isInit) {
-                if (models.includes(bse_model)) {
-                    mSelect.value = bse_model;
-                } else {
-                    mSelect.value = '自定义';
-                    mCustom.value = bse_model;
-                }
-            } else {
-                mSelect.selectedIndex = 0;
-            }
-            updateModelCustom();
-        }
-
-        function updateModelCustom() {
-            mCustom.style.display = mSelect.value === '自定义' ? 'block' : 'none';
-        }
-
-        autoOpenCheckbox.addEventListener('change', () => {
-            autoTabSelect.disabled = !autoOpenCheckbox.checked;
-        });
-
-        pSelect.addEventListener('change', () => updateUIForPlatform(false));
-        mSelect.addEventListener('change', updateModelCustom);
-        updateUIForPlatform(true);
-
+        const pOptions = Object.keys(API_PLATFORMS).map(k => `<option value="${k}" ${bse_platform === k ? 'selected' : ''}>${API_PLATFORMS[k].name}</option>`).join('');
+        const tabOptions = Object.keys(TAB_OPTIONS).map(k => `<option value="${k}" ${autoOpenTab === k ? 'selected' : ''}>${TAB_OPTIONS[k]}</option>`).join('');
+        safeSetInnerHTML(el, `<div style="padding:10px 0;"><div class="bse-settings-block"><label class="bse-settings-block-label">API 平台</label><select class="bse-settings-input" id="bse-s-platform">${pOptions}</select><div style="margin-top:8px;"><a id="bse-s-link" href="#" target="_blank" style="font-size:12px;color:var(--bse-primary);text-decoration:none;">获取 API Key →</a></div></div><div class="bse-settings-block" id="bse-url-wrapper" style="display: ${bse_platform === 'custom' ? 'block' : 'none'};"><label class="bse-settings-block-label">API URL Endpoint</label><input type="text" class="bse-settings-input" id="bse-s-url" value="${escapeHtml(API_URL)}"></div><div class="bse-settings-block"><label class="bse-settings-block-label">模型 (Model)</label><select class="bse-settings-input" id="bse-s-model-select"></select><input type="text" class="bse-settings-input" id="bse-s-model-custom" style="margin-top:8px;display:none;" placeholder="输入自定义模型名..." value="${escapeHtml(bse_model)}"></div><div class="bse-settings-block"><label class="bse-settings-block-label">API Key</label><input type="password" class="bse-settings-input" id="bse-s-key" value="${escapeHtml(API_KEY)}" placeholder="输入API Key.."></div><div class="bse-settings-block" style="margin-top:24px;"><label class="bse-settings-check-row"><input type="checkbox" id="bse-s-auto" ${autoGenSummary ? 'checked' : ''}><div class="bse-settings-check-text"><span class="bse-settings-check-title">自动 AI 分析</span><span class="bse-settings-check-desc">开启后每次打开带字幕的视频将自动进行AI分析，可能消耗较多 Tokens。</span></div></label></div><div class="bse-settings-block" style="margin-top:16px;"><label class="bse-settings-check-row"><input type="checkbox" id="bse-s-opinion" ${enableOpinionAnalysis ? 'checked' : ''}><div class="bse-settings-check-text"><span class="bse-settings-check-title">舆论分析（热门评论）</span><span class="bse-settings-check-desc">开启后AI分析将获取前30条热门评论并包含对评论的舆论倾向分析。</span></div></label></div><div class="bse-settings-block" style="margin-top:16px;"><label class="bse-settings-check-row"><input type="checkbox" id="bse-s-auto-open" ${autoOpenPanel ? 'checked' : ''}><div class="bse-settings-check-text"><span class="bse-settings-check-title">自动打开面板</span><span class="bse-settings-check-desc">开启后自动打开面板。仅在有字幕的视频中生效。</span></div></label></div><div class="bse-settings-block" style="margin-top:16px;"><label class="bse-settings-block-label">自动打开面板时显示的标签页</label><select class="bse-settings-input" id="bse-s-auto-tab" ${!autoOpenPanel ? 'disabled' : ''}>${tabOptions}</select></div><div style="margin-top:32px;display:flex;gap:12px;"><button class="bse-btn bse-btn-secondary" id="bse-s-cancel">取消</button><button class="bse-btn bse-btn-primary" id="bse-s-save">保存设置</button></div><div class="bse-author-info"><p class="bse-author-text">作者: <a href="https://github.com/LiuMashiro" target="_blank" class="bse-author-link">LiuMashiro</a></p><p class="bse-author-text" style="margin-top:8px;">字幕获取模块部分使用了M0M Chen的 视频字幕提取器Pro 代码（MIT）</p></div></div>`);
+        const pSelect = document.getElementById('bse-s-platform'); const urlWrapper = document.getElementById('bse-url-wrapper'); const urlInput = document.getElementById('bse-s-url'); const mSelect = document.getElementById('bse-s-model-select'); const mCustom = document.getElementById('bse-s-model-custom'); const pLink = document.getElementById('bse-s-link'); const autoOpenCheckbox = document.getElementById('bse-s-auto-open'); const autoTabSelect = document.getElementById('bse-s-auto-tab');
+        function updateUIForPlatform(isInit = false) { const plat = pSelect.value; const pData = API_PLATFORMS[plat]; pLink.href = pData.link; pLink.style.display = pData.link ? 'inline-block' : 'none'; urlWrapper.style.display = plat === 'custom' ? 'block' : 'none'; if (!isInit || plat !== 'custom') { if (plat !== 'custom') urlInput.value = pData.url; } urlInput.disabled = plat !== 'custom'; const models = pData.models; mSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join(''); if (isInit) { if (models.includes(bse_model)) mSelect.value = bse_model; else { mSelect.value = '自定义'; mCustom.value = bse_model; } } else mSelect.selectedIndex = 0; updateModelCustom(); }
+        function updateModelCustom() { mCustom.style.display = mSelect.value === '自定义' ? 'block' : 'none'; }
+        autoOpenCheckbox.addEventListener('change', () => { autoTabSelect.disabled = !autoOpenCheckbox.checked; });
+        pSelect.addEventListener('change', () => updateUIForPlatform(false)); mSelect.addEventListener('change', updateModelCustom); updateUIForPlatform(true);
         document.getElementById('bse-s-cancel')?.addEventListener('click', () => switchTab('preview'));
-
         document.getElementById('bse-s-save')?.addEventListener('click', () => {
-            bse_platform = document.getElementById('bse-s-platform').value;
-            API_URL = document.getElementById('bse-s-url').value.trim();
-            API_KEY = document.getElementById('bse-s-key').value.trim();
-
-            const selectedModel = document.getElementById('bse-s-model-select').value;
-            bse_model = selectedModel === '自定义'
-                ? document.getElementById('bse-s-model-custom').value.trim()
-                : selectedModel;
-
-            autoGenSummary = document.getElementById('bse-s-auto').checked;
-            autoOpenPanel = document.getElementById('bse-s-auto-open').checked;
-            autoOpenTab = document.getElementById('bse-s-auto-tab').value;
-
-            GM_setValue('bse_platform', bse_platform);
-            GM_setValue('bse_api_url', API_URL);
-            GM_setValue('bse_api_key', API_KEY);
-            GM_setValue('bse_model', bse_model);
-            GM_setValue('bse_auto_summary', autoGenSummary);
-            GM_setValue('bse_auto_open_panel', autoOpenPanel);
-            GM_setValue('bse_auto_open_tab', autoOpenTab);
-
-            logAPI('设置已保存', { 平台: bse_platform, 模型: bse_model, 自动生成: autoGenSummary });
-
-            showToast('✓ 设置已保存', 'success');
-            switchTab('preview');
-            const container = document.querySelector('.bse-container');
-            if (container) container.remove();
-            createUI();
-            setTimeout(() => fetchAllSubtitles(true), 200);
+            bse_platform = document.getElementById('bse-s-platform').value; API_URL = document.getElementById('bse-s-url').value.trim(); API_KEY = document.getElementById('bse-s-key').value.trim();
+            const selectedModel = document.getElementById('bse-s-model-select').value; bse_model = selectedModel === '自定义' ? document.getElementById('bse-s-model-custom').value.trim() : selectedModel;
+            autoGenSummary = document.getElementById('bse-s-auto').checked; enableOpinionAnalysis = document.getElementById('bse-s-opinion').checked; autoOpenPanel = document.getElementById('bse-s-auto-open').checked; autoOpenTab = document.getElementById('bse-s-auto-tab').value;
+            GM_setValue('bse_platform', bse_platform); GM_setValue('bse_api_url', API_URL); GM_setValue('bse_api_key', API_KEY); GM_setValue('bse_model', bse_model); GM_setValue('bse_auto_summary', autoGenSummary); GM_setValue('bse_opinion_analysis', enableOpinionAnalysis); GM_setValue('bse_auto_open_panel', autoOpenPanel); GM_setValue('bse_auto_open_tab', autoOpenTab);
+            showToast('✓ 设置已保存', 'success'); switchTab('preview'); const container = document.querySelector('.bse-container'); if (container) container.remove(); createUI(); setTimeout(() => fetchAllSubtitles(true), 200);
         });
     }
 
     // ===================== 23. 初始化与路由监听 =====================
-    function init() {
-        log('B站字幕获取、AI分析及广告跳过工具 v1.2.3 已加载。作者：LiuMashiro');
-        aiSummaryCache = loadCache();
-        createUI();
-        setTimeout(() => { fetchAllSubtitles(); initAdSkipMonitor(); }, 1500);
-    }
-
-    function resetState() {
-        logAPI('路由变更，重置状态', { 旧URL: lastUrl, 新URL: location.href });
-
-        // 清理自动生成定时器
-        if (autoGenerateTimer) {
-            clearTimeout(autoGenerateTimer);
-            autoGenerateTimer = null;
-        }
-
-        // 递增代次ID，使所有正在进行的异步回调失效
-        currentGenerationId++;
-        isGeneratingAI = false;
-        progressMarkInitialized = false;
-        lastAdCheckResult = null;
-
-        currentVideoKey = null;
-        allSubtitles = [];
-        currentSubtitleData = null;
-        selectedSubtitleId = null;
-        aiConversationHistory = [];
-        adSegments = [];
-        hasJumpedAds = {};
-        showRawAIText = false;
-
-        const existingMark = document.getElementById('bse-ad-progress-mark');
-        if (existingMark) existingMark.remove();
-
-        updateUI();
-        setTimeout(() => fetchAllSubtitles(), 1500);
-    }
-
-    let lastUrl = location.href;
-    new MutationObserver(() => {
-        if (location.href !== lastUrl) {
-            lastUrl = location.href;
-            resetState();
-        }
-    }).observe(document, { subtree: true, childList: true });
-
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
-    else init();
-
+    function init() { log('B站字幕获取、AI分析及广告跳过工具 v1.3.2 已加载。作者：LiuMashiro'); aiSummaryCache = loadCache(); createUI(); setTimeout(() => { fetchAllSubtitles(); initAdSkipMonitor(); }, 1500); }
+    function resetState() { if (autoGenerateTimer) { clearTimeout(autoGenerateTimer); autoGenerateTimer = null; } currentGenerationId++; isGeneratingAI = false; progressMarkInitialized = false; lastAdCheckResult = null; currentVideoKey = null; currentAid = null; hotComments = []; allSubtitles = []; currentSubtitleData = null; selectedSubtitleId = null; aiConversationHistory = []; adSegments = []; hasJumpedAds = {}; showRawAIText = false; const existingMark = document.getElementById('bse-ad-progress-mark'); if (existingMark) existingMark.remove(); updateUI(); setTimeout(() => fetchAllSubtitles(), 1500); }
+    let lastUrl = location.href; new MutationObserver(() => { if (location.href !== lastUrl) { lastUrl = location.href; resetState(); } }).observe(document, { subtree: true, childList: true });
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
