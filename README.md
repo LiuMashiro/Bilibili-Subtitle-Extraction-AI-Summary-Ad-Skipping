@@ -25,6 +25,9 @@
 
 ## 快速使用
 - 安装脚本
+  - [在GreasyFork下载](https://greasyfork.org/zh-CN/scripts/579482-b%E7%AB%99%E5%AD%97%E5%B9%95%E8%8E%B7%E5%8F%96-ai%E5%88%86%E6%9E%90%E5%8F%8A%E5%B9%BF%E5%91%8A%E8%B7%B3%E8%BF%87%E5%B7%A5%E5%85%B7)
+  - 或者，[在脚本猫下载](https://scriptcat.org/zh-CN/script-show-page/6728)
+  - 或者，下载/复制脚本文件，在篡改猴/油猴中导入
 - 打开哔哩哔哩视频播放页，点击右侧悬浮按钮唤起功能面板
 
 ## 设置
