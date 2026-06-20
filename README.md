@@ -4,12 +4,10 @@
 实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**，并依据评论区热门评论进行舆情分析。
 
 <div style="display: flex; flex-wrap: nowrap; gap: 4px; max-width: 90%; margin: 0 auto;">
-  <img src="https://github.com/user-attachments/assets/9b21afc8-450d-428b-91b4-f918abd00f5e" alt="图片1" style="width: 32%; height: auto;">
-  <img src="https://github.com/user-attachments/assets/bd14f868-d598-4192-98aa-f450377588a4" alt="图片2" style="width: 32%; height: auto;">
-  <img src="https://github.com/user-attachments/assets/4b6de216-4719-436e-a10c-fca34912fc26" alt="图片3" style="width: 32%; height: auto;">
+  <img src="https://scriptcat.org/api/v2/resource/image/w3Ep528nCwLbTmDB" alt="图片1" style="width: 32%; height: auto;">
+  <img src="https://scriptcat.org/api/v2/resource/image/H4CvzochKdUEQuk8" alt="图片2" style="width: 32%; height: auto;">
+  <img src="https://scriptcat.org/api/v2/resource/image/WNqWDn6QZzb9sNOj" alt="图片3" style="width: 32%; height: auto;">
 </div>
-
-
 
 
 
@@ -27,19 +25,14 @@
 
 ## 快速使用
 - 安装脚本
-  - [在GreasyFork下载](https://greasyfork.org/zh-CN/scripts/579482-b%E7%AB%99%E5%AD%97%E5%B9%95%E8%8E%B7%E5%8F%96-ai%E5%88%86%E6%9E%90%E5%8F%8A%E5%B9%BF%E5%91%8A%E8%B7%B3%E8%BF%87%E5%B7%A5%E5%85%B7)
-  - 或者，[在脚本猫下载](https://scriptcat.org/zh-CN/script-show-page/6728)
-  - 或者，下载/复制脚本文件，在篡改猴/油猴中导入
 - 打开哔哩哔哩视频播放页，点击右侧悬浮按钮唤起功能面板
 
-## API配置
-- 支持用户自定义API。
-
+## 设置
+- 支持高度自定义设置和自定义API。
 <div style="display: flex; flex-wrap: nowrap; gap: 4px; max-width: 90%; margin: 0 auto;">
-  <img src="https://github.com/user-attachments/assets/597447dd-2082-49de-88d7-dba6e368c418" alt="图片1" style="width: 32%; height: auto;">
-  <img src="https://github.com/user-attachments/assets/bd14f868-d598-4192-98aa-f450377588a4" alt="图片2" style="width: 32%; height: auto;">
+  <img src="https://scriptcat.org/api/v2/resource/image/rozSwdmR2HnbaxXA" alt="图片1" style="width: 32%; height: auto;">
+  <img src="https://scriptcat.org/api/v2/resource/image/8Yf9eoRX7f9Xc2Pp" alt="图片2" style="width: 32%; height: auto;">
 </div>
-
 
 ## 使用须知
 - 本脚本为个人编程学习、技术研究、代码练习用途开源免费分享，仅用于学习前端交互、网页脚本逻辑等，不用于任何商业盈利。
@@ -51,3 +44,4 @@
 - 只要您下载、查看、运行、引用本项目任意代码片段，即表示您已完整阅读、理解并自愿接受本全部免责条款，放弃向项目开发者追责、索赔的相关权利。
 - 本项目与哔哩哔哩无隶属关系。
 - 字幕获取模块部分使用了M0M Chen的 视频字幕提取器Pro 代码（MIT）。
+- GitHub: https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main
