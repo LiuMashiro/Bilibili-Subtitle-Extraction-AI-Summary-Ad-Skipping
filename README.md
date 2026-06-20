@@ -3,12 +3,7 @@
 
 实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**，并依据评论区热门评论进行舆情分析。
 
-<div style="display: flex; flex-wrap: nowrap; gap: 4px; max-width: 90%; margin: 0 auto;">
-  <img src="https://scriptcat.org/api/v2/resource/image/w3Ep528nCwLbTmDB" alt="图片1" style="width: 32%; height: auto;">
-  <img src="https://scriptcat.org/api/v2/resource/image/H4CvzochKdUEQuk8" alt="图片2" style="width: 32%; height: auto;">
-  <img src="https://scriptcat.org/api/v2/resource/image/WNqWDn6QZzb9sNOj" alt="图片3" style="width: 32%; height: auto;">
-</div>
-
+  ![image.png](https://scriptcat.org/api/v2/resource/image/hj6QXAGhA9dh4C8N)
 
 
 ## 主要功能
@@ -32,10 +27,7 @@
 
 ## 设置
 - 支持高度自定义设置和自定义API。
-<div style="display: flex; flex-wrap: nowrap; gap: 4px; max-width: 90%; margin: 0 auto;">
-  <img src="https://scriptcat.org/api/v2/resource/image/rozSwdmR2HnbaxXA" alt="图片1" style="width: 32%; height: auto;">
-  <img src="https://scriptcat.org/api/v2/resource/image/8Yf9eoRX7f9Xc2Pp" alt="图片2" style="width: 32%; height: auto;">
-</div>
+![image.png](https://scriptcat.org/api/v2/resource/image/BDUWEogE9t6stZ3a)
 
 ## 使用须知
 - 本脚本为个人编程学习、技术研究、代码练习用途开源免费分享，仅用于学习前端交互、网页脚本逻辑等，不用于任何商业盈利。
