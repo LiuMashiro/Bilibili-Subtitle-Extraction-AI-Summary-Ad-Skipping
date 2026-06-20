@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 ## [1.5.0]
 ### Added
-- 新增基于脚本猫的版本更新检测能力，与 GitHub 并行
+- 新增基于脚本猫的版本更新检测能力，与 GitHub 并行（支持中国直连）
 - 新增脚本猫跳转入口
 - 新增 HTTP 429 常见错误（请求频率超限，常见于智谱免费API）错误中文提示
 
