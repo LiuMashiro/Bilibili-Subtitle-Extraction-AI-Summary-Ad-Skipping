@@ -1,6 +1,19 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [1.5.0]
+### Added
+- 新增基于脚本猫的版本更新检测能力，与 GitHub 并行
+- 新增脚本猫跳转入口
+- 新增 HTTP 429 常见错误（请求频率超限，常见于智谱免费API）错误中文提示
+
+### Changed
+- 设置页重新分组布局，功能层级更清晰
+- 优化悬浮按钮状态指示灯逻辑，无字幕不显示、字幕就绪黄点、AI 总结完成绿点
+- 设置页底栏修改为保存/取消按钮，更清晰
+- 降低面板宽度
+- 优化广告检测提示卡片UI
+
 ## [1.4.0]
 ### Added
 - 提供 AI 总结详细度选项，可以自定义AI总结的详细程度
