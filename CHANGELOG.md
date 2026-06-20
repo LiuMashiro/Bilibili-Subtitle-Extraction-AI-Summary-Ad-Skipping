@@ -1,6 +1,23 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [1.4.0]
+### Added
+- 提供 AI 总结详细度选项，可以自定义AI总结的详细程度
+- 内置更多 API 服务商和模型（Claude与GLM-5.2）
+- 按供应商独立存储 API Key：不同 API 供应商的密钥现在分开存储，无需在切换供应商时反复覆盖输入 API
+- 设置页底部新增 GitHub 仓库和 Greasy Fork 脚本页的快捷跳转按钮
+- 自动对比本 CHANGELOG 文件以检查更新
+- 新增广告自动跳过开关
+- 增加版本号显示
+
+### Fixed
+- 修复在某些情况下点击面板外部或触发按钮均无法关闭面板的问题
+- 修复当视频无字幕时，面板持续显示"数据加载中..."，需切换标签页后才正确显示"无字幕"的问题
+
+### Changed
+- 默认详细度由"极简"改为"简洁"
+
 ## [1.3.2]
 ### Added
 - 热门评论舆情分析功能。
