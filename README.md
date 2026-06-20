@@ -4,10 +4,12 @@
 实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**，并依据评论区热门评论进行舆情分析。
 
 <div style="display: flex; flex-wrap: nowrap; gap: 4px; max-width: 90%; margin: 0 auto;">
-  <img src="https://github.com/user-attachments/assets/0b342f2a-b0c4-488d-9ca3-a878bf20b9cc" alt="图片1" style="width: 32%; height: auto;">
-  <img src="https://github.com/user-attachments/assets/52ebf52a-03ab-4462-a528-72b80b8a826c" alt="图片2" style="width: 32%; height: auto;">
-  <img src="https://github.com/user-attachments/assets/366c6eb0-dbdc-412e-84c7-58c0f13f5327" alt="图片3" style="width: 32%; height: auto;">
+  <img src="https://github.com/user-attachments/assets/9b21afc8-450d-428b-91b4-f918abd00f5e" alt="图片1" style="width: 32%; height: auto;">
+  <img src="https://github.com/user-attachments/assets/bd14f868-d598-4192-98aa-f450377588a4" alt="图片2" style="width: 32%; height: auto;">
+  <img src="https://github.com/user-attachments/assets/4b6de216-4719-436e-a10c-fca34912fc26" alt="图片3" style="width: 32%; height: auto;">
 </div>
+
+
 
 
 
@@ -32,7 +34,11 @@
 
 ## API配置
 - 支持用户自定义API。
-<img src="https://github.com/user-attachments/assets/597447dd-2082-49de-88d7-dba6e368c418" style="width:40%; height:auto;">
+
+<div style="display: flex; flex-wrap: nowrap; gap: 4px; max-width: 90%; margin: 0 auto;">
+  <img src="https://github.com/user-attachments/assets/597447dd-2082-49de-88d7-dba6e368c418" alt="图片1" style="width: 32%; height: auto;">
+  <img src="https://github.com/user-attachments/assets/bd14f868-d598-4192-98aa-f450377588a4" alt="图片2" style="width: 32%; height: auto;">
+</div>
 
 
 ## 使用须知
