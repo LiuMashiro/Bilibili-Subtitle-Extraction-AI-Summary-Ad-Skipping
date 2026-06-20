@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 - 按供应商独立存储 API Key：不同 API 供应商的密钥现在分开存储，无需在切换供应商时反复覆盖输入 API
 - 设置页底部新增 GitHub 仓库和 Greasy Fork 脚本页的快捷跳转按钮
 - 自动对比本 CHANGELOG 文件以检查更新
-- 新增广告自动跳过开关
+- 新增广告自动跳过开关，可以手动关闭此功能（建议在识别错误时使用）
 - 增加版本号显示
 
 ### Fixed
