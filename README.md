@@ -1,7 +1,7 @@
 # B站字幕获取、AI分析及广告跳过工具
 **Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping**
 
-实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**。
+实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**，并依据评论区热门评论进行舆情分析。
 
 <div style="display: flex; flex-wrap: nowrap; gap: 4px; max-width: 90%; margin: 0 auto;">
   <img src="https://github.com/user-attachments/assets/0b342f2a-b0c4-488d-9ca3-a878bf20b9cc" alt="图片1" style="width: 32%; height: auto;">
@@ -21,6 +21,7 @@
 - 视频内容本地缓存，避免重复请求
 - 适配普通视频、番剧、稍后再看播放页
 - 点击字幕跳转到指定时间
+- 舆情分析
 
 ## 快速使用
 - 安装脚本
