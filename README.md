@@ -21,7 +21,7 @@
 
 ## 设置
 - 支持高度自定义设置和自定义API。
-![image.png](https://scriptcat.org/api/v2/resource/image/BDUWEogE9t6stZ3a)
+![image.png](https://scriptcat.org/api/v2/resource/image/jUdOBxYLzHekoxGL)
 
 ## 使用须知
 - 本脚本为个人编程学习、技术研究、代码练习用途开源免费分享，仅用于学习前端交互、网页脚本逻辑等，不用于任何商业盈利。
