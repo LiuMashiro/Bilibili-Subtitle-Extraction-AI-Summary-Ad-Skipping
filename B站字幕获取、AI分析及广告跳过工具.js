@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      1.5.0
+// @version      1.5.5
 // @description  自动提取B站视频字幕，支持AI生成的CC字幕，通过AI总结+广告识别，自动跳过广告。支持热门评论舆论分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -33,7 +33,7 @@
     'use strict';
 
     // ===================== 1. 全局配置 =====================
-    const SCRIPT_VERSION = '1.5.0';
+    const SCRIPT_VERSION = '1.5.5';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482-b%E7%AB%99%E5%AD%97%E5%B9%95%E8%8E%B7%E5%8F%96-ai%E5%88%86%E6%9E%90%E5%8F%8A%E5%B9%BF%E5%91%8A%E8%B7%B3%E8%BF%87%E5%B7%A5%E5%85%B7';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -46,7 +46,7 @@
             link: 'https://platform.deepseek.com/'
         },
         'zlm': {
-            name: '智谱ZLM (提供免费模型)',
+            name: '智谱 (提供免费模型)',
             url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
             models: ['GLM-4.7-Flash (免费)', 'GLM-5.2', 'GLM-5.1', 'GLM-5', 'GLM-5-Turbo', 'GLM-4.7', 'GLM-4.7-FlashX', 'GLM-4.6', 'GLM-4.5-Air', 'GLM-4.5-AirX', 'GLM-4-Long', 'GLM-4-FlashX-250414', 'GLM-4-Flash-250414', '自定义'],
             link: 'https://bigmodel.cn/'
@@ -108,13 +108,30 @@
     let autoOpenPanel = GM_getValue('bse_auto_open_panel', true);
     let autoOpenTab = GM_getValue('bse_auto_open_tab', 'preview');
     let enableOpinionAnalysis = GM_getValue('bse_opinion_analysis', true);
+    let bse_opinion_comments_count = GM_getValue('bse_opinion_comments_count', 30);
     let bse_detail_level = GM_getValue('bse_detail_level', 'concise');
     let bse_auto_skip_ad = GM_getValue('bse_auto_skip_ad', true);
     // ===================== 3. 常量与提示词 =====================
     const AD_BRAND_LIST = ["转转", "追觅", "神奇小鹿", "妙界", "拼多多", "加速器", "得物", "萌牙家"];
     const AD_MARK_COLOR = 'rgba(255, 193, 7, 0.6)';
 
-    function getAISummaryPrompt() {
+    function getAISummaryPrompt(hasSubtitle) {
+        const commonRule = "注意：请勿使用Latex公式。\n";
+
+        if (!hasSubtitle) {
+            return commonRule + `注意：当前视频未提供字幕数据。请不要进行视频内容总结，而是根据提供的视频标题、简介以及热门评论区数据（如果有），直接进行舆论分析。
+如果没有提供评论数据，则说明无法进行深度的舆论分析，可以仅分析标题与简介的倾向。
+
+请直接输出舆论分析：
+## 舆论分析
+- 提炼评论区或标题简介的1-N个主要观点方向，简明概括每个方向的核心立场，标注情感倾向（正面/负面/中性/混合）和大约占比。
+- 如有高赞代表性观点，可简要引用（无需标注用户名）
+- 一句话概括整体氛围
+
+最后，由于没有视频内容，请严格在末尾回复：
+广告时间[无]`;
+        }
+
         let summaryWord, overviewWord, listWord;
         switch (bse_detail_level) {
             case 'very_detailed':
@@ -130,7 +147,7 @@
                 summaryWord = '简洁';
                 overviewWord = '简明'; listWord = '精简地分点列出核心结论和关键信息（剔除修饰性废话）'; break;
         }
-        return `注意：请不要在总结中提及视频中的任何广告植入、商业推广等内容，只聚焦核心内容。
+        return commonRule + `注意：请不要在总结中提及视频中的任何广告植入、商业推广等内容，只聚焦核心内容。
 已知以下品牌均属于广告范畴（包含但不限于）：${AD_BRAND_LIST.join('、')}。
 字幕包含时间戳（[MM:SS.ms]），但在总结内容中请严格剔除时间戳，只保留通顺的文字。字幕为智能识别，可能包含错误。
 
@@ -582,6 +599,9 @@
         }
         .bse-settings-check-desc { font-size:12px; color:var(--bse-text-muted); line-height:1.5;
         }
+
+        .bse-password-mask { -webkit-text-security: disc; }
+
         .bse-author-info { margin-top:28px; padding-top:24px; border-top:1px solid var(--bse-border); text-align:center;
         }
         .bse-author-text { font-size:13px; color:var(--bse-text-muted);
@@ -672,11 +692,23 @@
         const result = {};
         for (const key of Object.keys(raw)) {
             const val = raw[key];
-            if (typeof val === 'string') result[key] = { summary: val, qa: [] };
-            else if (val && typeof val === 'object' && typeof val.summary === 'string') result[key] = { summary: val.summary, qa: Array.isArray(val.qa) ?
-            val.qa : [] };
+            if (typeof val === 'string') {
+                result[key] = { prompt: '', summary: val, qa: [] };
+            }
+            else if (val && typeof val === 'object' && typeof val.summary === 'string') {
+                result[key] = {
+                    prompt: typeof val.prompt === 'string' ? val.prompt : '',
+                    summary: val.summary,
+                    qa: Array.isArray(val.qa) ? val.qa : []
+                };
+            }
         }
         return result;
+    }
+    function getCachedPrompt(videoKey) {
+        const entry = aiSummaryCache[videoKey];
+        if (!entry) return null;
+        return typeof entry === 'string' ? '' : entry.prompt || '';
     }
     function getCachedSummary(videoKey) {
         const entry = aiSummaryCache[videoKey];
@@ -688,10 +720,10 @@
         if (!entry || typeof entry === 'string') return [];
         return Array.isArray(entry.qa) ? entry.qa : [];
     }
-    function setCachedSummary(videoKey, summary) {
+    function setCachedSummary(videoKey, prompt, summary) {
         const existing = aiSummaryCache[videoKey];
         const qa = (existing && Array.isArray(existing.qa)) ? existing.qa : [];
-        aiSummaryCache[videoKey] = { summary, qa };
+        aiSummaryCache[videoKey] = { prompt, summary, qa };
         GM_setValue('aiSummaryCache', aiSummaryCache);
     }
     function appendCachedQA(videoKey, q, a) {
@@ -750,8 +782,8 @@
         return 0;
     }
 
-    let scriptcatCheckResult = null; 
-    let githubCheckResult = null;   
+    let scriptcatCheckResult = null;
+    let githubCheckResult = null;
     let scriptcatCheckDone = false;
     let githubCheckDone = false;
 
@@ -962,7 +994,7 @@
     async function fetchHotComments() {
         let aid = currentAid;
         if (!aid) { try { aid = unsafeWindow.__INITIAL_STATE__?.aid; } catch {} } if (!aid) return [];
-        try { const r = await fetch(`https://api.bilibili.com/x/v2/reply/main?type=1&oid=${aid}&mode=3&next=0&ps=30`, { credentials: 'include' }); const d = await r.json();
+        try { const r = await fetch(`https://api.bilibili.com/x/v2/reply/main?type=1&oid=${aid}&mode=3&next=0&ps=${bse_opinion_comments_count}`, { credentials: 'include' }); const d = await r.json();
         if (d.code !== 0 || !d.data?.replies) return []; return d.data.replies.map(r => ({ content: r.content.message, like: r.like }));
         } catch (e) { return []; }
     }
@@ -973,25 +1005,35 @@
         let isClaude = API_URL.includes('anthropic.com');
         let actualModel = bse_model.replace(' (免费)', '');
         let fetchUrl = API_URL;
+
+        let safeApiKey = API_KEY.replace(/[^\x20-\x7E]/g, '');
+
         let headers = { 'Content-Type': 'application/json' }; let bodyData = {};
         if (isClaude) {
-            headers['x-api-key'] = API_KEY;
+            headers['x-api-key'] = safeApiKey;
             headers['anthropic-version'] = '2023-06-01';
             headers['Accept'] = 'text/event-stream';
             bodyData = { model: actualModel, max_tokens: 8192, stream: true, messages: messages };
         } else if (isGemini) {
             fetchUrl = fetchUrl.replace('{model_name}', actualModel);
-            if (fetchUrl.includes(':generateContent')) fetchUrl = fetchUrl.replace(':generateContent', ':streamGenerateContent'); fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${API_KEY}&alt=sse`;
+            if (fetchUrl.includes(':generateContent')) fetchUrl = fetchUrl.replace(':generateContent', ':streamGenerateContent'); fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${safeApiKey}&alt=sse`;
             bodyData = { contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) };
         } else {
-            headers['Authorization'] = `Bearer ${API_KEY}`;
+            headers['Authorization'] = `Bearer ${safeApiKey}`;
             headers['Accept'] = 'text/event-stream'; bodyData = { model: actualModel, messages: messages, stream: true };
         }
         const startTime = Date.now();
         const resp = await fetch(fetchUrl, { method: 'POST', headers, body: JSON.stringify(bodyData) });
         if (!resp.ok) {
-            if (resp.status === 429) throw new Error('HTTP 429 (请求频率过高，请稍后再试或更换限额更大的模型)');
-            throw new Error(`HTTP ${resp.status}`);
+            if (resp.status === 401) throw new Error('HTTP 401 (未授权，请检查API Key是否填写正确)');
+            if (resp.status === 403) throw new Error('HTTP 403 (禁止访问，请检查账号欠费、接口未开通、IP受限、内容触发安全拦截)');
+            if (resp.status === 404) throw new Error('HTTP 404 (请核对请求URL与模型名)');
+            if (resp.status === 408) throw new Error('HTTP 408 (请求超时)');
+            if (resp.status === 413) throw new Error('HTTP 413 (请求体过大)');
+            if (resp.status === 429) throw new Error('HTTP 429 (请求频率过高，请稍后再试，或改用限制更宽容的模型)');
+            if (resp.status === 500) throw new Error('HTTP 500 (AI服务内部异常，可间隔几秒后重试)');
+            if (resp.status === 502) throw new Error('HTTP 502 (网关错误，上游模型服务异常，稍后重试)');
+            if (resp.status === 503) throw new Error('HTTP 503 (服务不可用：平台维护、服务器过载、高峰期限流)');
         }
         if (!resp.body) throw new Error('不支持流式响应');
         const reader = resp.body.getReader(), dec = new TextDecoder('utf-8'); let buf = '', full = '';
@@ -1009,19 +1051,24 @@
             let isGemini = API_URL.includes('generativelanguage.googleapis.com');
             let isClaude = API_URL.includes('anthropic.com');
             let actualModel = bse_model.replace(' (免费)', '');
-            let fetchUrl = API_URL; let headers = { 'Content-Type': 'application/json' }; let bodyData = {};
+            let fetchUrl = API_URL;
+
+            let safeApiKey = API_KEY.replace(/[^\x20-\x7E]/g, '');
+            let headers = { 'Content-Type': 'application/json' }; let bodyData = {};
+
             if (isClaude) {
-                headers['x-api-key'] = API_KEY;
+                headers['x-api-key'] = safeApiKey;
                 headers['anthropic-version'] = '2023-06-01';
                 bodyData = { model: actualModel, max_tokens: 8192, messages: messages };
             } else if (isGemini) {
-                fetchUrl = fetchUrl.replace('{model_name}', actualModel); fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${API_KEY}`; bodyData = { contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) };
+                fetchUrl = fetchUrl.replace('{model_name}', actualModel); fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${safeApiKey}`; bodyData = { contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) };
             } else {
-                headers['Authorization'] = `Bearer ${API_KEY}`;
+                headers['Authorization'] = `Bearer ${safeApiKey}`;
                 bodyData = { model: actualModel, messages: messages };
             }
             GM_xmlhttpRequest({ method: 'POST', url: fetchUrl, headers, data: JSON.stringify(bodyData), timeout: 60000,
                 onload(r) {
+                    if (r.status === 401) return reject(new Error('HTTP 401 (未授权，可能是 API Key 错误或已失效)'));
                     if (r.status === 429) return reject(new Error('HTTP 429 (请求频率过高，请稍后再试或更换限额更大的模型)'));
                     try { const d = JSON.parse(r.responseText); if (d.error) return reject(new Error(d.error.message || JSON.stringify(d.error))); let result; if (isClaude) result = d.content?.[0]?.text; else if (isGemini) result = d.candidates?.[0]?.content?.parts?.[0]?.text; else result = d.choices?.[0]?.message?.content; if (!result) return reject(new Error('API返回异常')); resolve(result); } catch (e) { reject(new Error('解析失败')); } },
                 onerror() { reject(new Error('网络错误')); }, ontimeout() { reject(new Error('请求超时')); }
@@ -1030,12 +1077,16 @@
     }
     async function generateAISummaryStream(subtitleText, streamEl) {
         let contextInfo = '';
+        const hasSubtitle = !!subtitleText.trim();
         const videoTitle = getVideoTitle(); const videoDesc = getVideoDescription(); const videoTags = getVideoTags();
         if (videoTitle) contextInfo += `视频标题：${videoTitle}\n`;
         if (videoDesc) contextInfo += `视频简介：${videoDesc}\n`; if (videoTags.length > 0) contextInfo += `视频标签：${videoTags.join(', ')}\n`; if (contextInfo) contextInfo += '\n';
         const commentsText = (enableOpinionAnalysis && hotComments.length > 0) ? formatCommentsForAI() : '';
         if (commentsText) contextInfo += `===== 热门评论（按热度排序）=====\n${commentsText}\n\n`;
-        const messages = [{ role: 'user', content: `${getAISummaryPrompt()}\n\n${contextInfo}${subtitleText}` }];
+
+        const fullPrompt = `${getAISummaryPrompt(hasSubtitle)}\n\n${contextInfo}${hasSubtitle ? '===== 视频字幕 =====\n' + subtitleText : ''}`;
+        const messages = [{ role: 'user', content: fullPrompt }];
+
         let summary = await callAPIStream(messages, text => { safeSetInnerHTML(streamEl, markdownToHtml(text)); streamEl.scrollTop = streamEl.scrollHeight; });
         let adCheck = extractAdSegments(summary); lastAdCheckResult = adCheck;
         if (adCheck.type === 'error') {
@@ -1044,8 +1095,8 @@
             try { const fix = await callAPINoStream(messages); summary = summary + '\n' + fix.trim(); adCheck = extractAdSegments(summary); lastAdCheckResult = adCheck;
             safeSetInnerHTML(streamEl, markdownToHtml(summary)); } catch (e) {}
         }
-        setCachedSummary(currentVideoKey, summary);
-        aiConversationHistory = [{ role: 'user', content: getAISummaryPrompt() }, { role: 'assistant', content: summary }];
+        setCachedSummary(currentVideoKey, fullPrompt, summary);
+        aiConversationHistory = [{ role: 'user', content: fullPrompt, fullContent: fullPrompt }, { role: 'assistant', content: summary }];
         adSegments = adCheck.segments;
         if (adSegments.length > 0) { initProgressMark(); initAdSkipMonitor(); } return summary;
     }
@@ -1143,8 +1194,9 @@
             bse_platform = document.getElementById('bse-s-platform').value; API_URL = document.getElementById('bse-s-url').value.trim(); API_KEY = document.getElementById('bse-s-key').value.trim();
             const selectedModel = document.getElementById('bse-s-model-select').value; bse_model = selectedModel === '自定义' ? document.getElementById('bse-s-model-custom').value.trim() : selectedModel;
             autoGenSummary = document.getElementById('bse-s-auto').checked; enableOpinionAnalysis = document.getElementById('bse-s-opinion').checked; bse_auto_skip_ad = document.getElementById('bse-s-auto-skip').checked; autoOpenPanel = document.getElementById('bse-s-auto-open').checked; autoOpenTab = document.getElementById('bse-s-auto-tab').value; bse_detail_level = document.getElementById('bse-s-detail').value;
+            bse_opinion_comments_count = parseInt(document.getElementById('bse-s-opinion-count').value) || 30;
             GM_setValue('bse_platform', bse_platform); GM_setValue('bse_api_url', API_URL); GM_setValue('bse_api_key_'
-+ bse_platform, API_KEY); GM_setValue('bse_model', bse_model); GM_setValue('bse_auto_summary', autoGenSummary); GM_setValue('bse_opinion_analysis', enableOpinionAnalysis); GM_setValue('bse_auto_skip_ad', bse_auto_skip_ad); GM_setValue('bse_auto_open_panel', autoOpenPanel); GM_setValue('bse_auto_open_tab', autoOpenTab); GM_setValue('bse_detail_level', bse_detail_level);
++ bse_platform, API_KEY); GM_setValue('bse_model', bse_model); GM_setValue('bse_auto_summary', autoGenSummary); GM_setValue('bse_opinion_analysis', enableOpinionAnalysis); GM_setValue('bse_auto_skip_ad', bse_auto_skip_ad); GM_setValue('bse_auto_open_panel', autoOpenPanel); GM_setValue('bse_auto_open_tab', autoOpenTab); GM_setValue('bse_detail_level', bse_detail_level); GM_setValue('bse_opinion_comments_count', bse_opinion_comments_count);
             showToast('✓ 设置已保存', 'success');
             switchTab('preview'); panelVisible = false; const container = document.querySelector('.bse-container'); if (container) container.remove(); createUI(); setTimeout(() => fetchAllSubtitles(true), 200);
         });
@@ -1205,18 +1257,38 @@
     // ===================== 20. AI 分析页渲染 =====================
     function renderAITab(el) {
         const hasSubtitle = !!(currentSubtitleData?.body?.length);
-        const cachedSummary = getCachedSummary(currentVideoKey); const cachedQA = getCachedQA(currentVideoKey);
-        if (cachedSummary && cachedQA.length && aiConversationHistory.length < 2) aiConversationHistory = [{ role: 'user', content: getAISummaryPrompt() }, { role: 'assistant', content: cachedSummary }, ...cachedQA.flatMap(qa => [{ role: 'user', content: qa.q }, { role: 'assistant', content: qa.a }])];
+        const cachedPrompt = getCachedPrompt(currentVideoKey);
+        const cachedSummary = getCachedSummary(currentVideoKey);
+        const cachedQA = getCachedQA(currentVideoKey);
+
+        if (cachedSummary && aiConversationHistory.length < 2) {
+            aiConversationHistory = [
+                { role: 'user', content: getAISummaryPrompt(hasSubtitle), fullContent: cachedPrompt || "(从缓存恢复，仅展示基础提示词结构，未包含视频上下文内容)\n" + getAISummaryPrompt(hasSubtitle) },
+                { role: 'assistant', content: cachedSummary },
+                ...cachedQA.flatMap(qa => [{ role: 'user', content: qa.q }, { role: 'assistant', content: qa.a }])
+            ];
+        }
+
         let html = '';
         if (!cachedSummary) {
-            html += `<button class="bse-ai-big-btn" id="bse-generate-btn" ${!hasSubtitle ||
-            !API_KEY || isGeneratingAI ? 'disabled' : ''}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)"><path d="M4 8L12 16L20 8" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg> ${isGeneratingAI ?
+            html += `<button class="bse-ai-big-btn" id="bse-generate-btn" ${!API_KEY || isGeneratingAI ? 'disabled' : ''}><svg width="17" height="17" viewBox="0 0 24 24" fill="none" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)"><path d="M4 8L12 16L20 8" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg> ${isGeneratingAI ?
             '生成中...' : 'AI分析'}</button>`;
-            if (!hasSubtitle) html += '<div class="bse-empty" style="padding:40px 20px;">请先获取字幕数据</div>'; else if (!API_KEY) html += '<div class="bse-empty" style="padding:40px 20px;">请先在设置中配置API密钥</div>';
+            if (!hasSubtitle) html += '<div class="bse-empty" style="padding:40px 20px;">未获取到字幕，点击进行舆情分析</div>';
+            if (!API_KEY) html += '<div class="bse-empty" style="padding:40px 20px;">请先在设置中配置API密钥</div>';
         } else {
             const retryHtml = `<button class="bse-retry-btn" id="bse-retry-btn" title="重新生成" ${isGeneratingAI ?
             'disabled' : ''}><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>`;
-            if (showRawAIText) { html += `<div style="position:relative;">${retryHtml}<textarea class="bse-text-area" readonly style="min-height:380px;font-family:monospace;font-size:13px;padding-top:20px;">${escapeHtml(cachedSummary)}</textarea></div>`;
+
+            if (showRawAIText) {
+                const userText = cachedPrompt || (aiConversationHistory.length > 0 ? (aiConversationHistory[0].fullContent || aiConversationHistory[0].content) : '');
+                const aiText = aiConversationHistory.length > 1 ? aiConversationHistory[1].content : cachedSummary;
+
+                html += `<div style="position:relative;">${retryHtml}
+                    <div style="font-size:13px; font-weight:bold; color:var(--bse-text); margin-bottom:8px;">发给AI的原始文本：</div>
+                    <textarea class="bse-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;margin-bottom:16px;">${escapeHtml(userText)}</textarea>
+                    <div style="font-size:13px; font-weight:bold; color:var(--bse-text); margin-bottom:8px;">AI返回的原始文本：</div>
+                    <textarea class="bse-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;">${escapeHtml(aiText)}</textarea>
+                </div>`;
             }
             else {
                 const adData = lastAdCheckResult ||
@@ -1232,11 +1304,11 @@
                 'disabled' : ''}></textarea><button class="bse-followup-btn" id="bse-followup-btn" ${isGeneratingAI ? 'disabled' : ''}>${isGeneratingAI ? '生成中...' : '发送追问'}</button></div>`;
             }
             html += `<div style="display:flex;justify-content:flex-end;margin-top:16px;"><label class="bse-checkbox-label" style="font-size:13px;color:var(--bse-text-muted);"><input type="checkbox" id="bse-raw-toggle" ${showRawAIText ?
-            'checked' : ''}>显示原始返回文本</label></div>`;
+            'checked' : ''}>查看原始文本</label></div>`;
         }
         safeSetInnerHTML(el, html);
         async function doGenerate(e) { if (e) e.stopPropagation();
-            if (isGeneratingAI) return; if (!hasSubtitle || !API_KEY) return; if (aiSummaryCache[currentVideoKey]) { delete aiSummaryCache[currentVideoKey]; aiConversationHistory = []; GM_setValue('aiSummaryCache', aiSummaryCache);
+            if (isGeneratingAI) return; if (!API_KEY) return; if (aiSummaryCache[currentVideoKey]) { delete aiSummaryCache[currentVideoKey]; aiConversationHistory = []; GM_setValue('aiSummaryCache', aiSummaryCache);
             } lastAdCheckResult = null; isGeneratingAI = true; const myGenerationId = ++currentGenerationId; const genBtn = document.getElementById('bse-generate-btn'); const retryBtn = document.getElementById('bse-retry-btn');
             if (genBtn) genBtn.disabled = true; if (retryBtn) retryBtn.disabled = true; safeSetInnerHTML(el, `<div class="bse-ai-result bse-markdown" id="bse-stream-body" style="min-height:400px;overflow-y:auto;"><div class="bse-loading"><div class="bse-spinner"></div><div>生成中...</div></div></div>`);
             const streamEl = document.getElementById('bse-stream-body'); try { await generateAISummaryStream(getTimestampedTextForAI(), streamEl); if (myGenerationId !== currentGenerationId) return; if (currentTab === 'ai') { renderAITab(el);
@@ -1279,11 +1351,34 @@
                 <div class="bse-settings-group-title"><span class="bse-settings-group-title-dot"></span>AI 设置</div>
 
                 <div class="bse-settings-subgroup">
-                    <div class="bse-settings-subgroup-title">API</div>
+                    <div class="bse-settings-subgroup-title" style="display:flex; justify-content:space-between; align-items:center;">
+                        <span>API</span>
+                        <span id="bse-api-hint-btn" style="font-size:12px; font-weight:normal; color:var(--bse-primary); cursor:pointer;">查看使用提示</span>
+                    </div>
+                    <div id="bse-api-hint-box" style="display:none; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:14px 16px; font-size:13px; color:#0369a1; margin-bottom:16px; line-height:1.6; animation:bse-slideup 0.3s ease;">
+                        <div style="font-weight:bold; margin-bottom:4px; font-size:14px; color:#0c4a6e;">● 前置基础</div>
+                        <ul style="margin:0 0 12px 0; padding-left:20px;">
+                            <li style="margin-bottom:4px;"><b>什么是AI API：</b>简单说就是第三方AI大模型开放的调用接口，发送一段文字请求，云端AI服务器就会返回回答。本程序的AI分析、视频总结、广告跳过、舆情分析功能均依赖通过API寻求AI回答。</li>
+                            <li><b>什么是API Key（密钥）：</b>相当于你的AI接口「门禁密码」，每一次调用AI都需要携带这个密钥验证身份、扣除额度，密钥绝对不能泄露、不能直接发在网上。本程序开源可查，不会上传您的API Key。</li>
+                        </ul>
+                        <div style="font-weight:bold; margin-bottom:4px; font-size:14px; color:#0c4a6e;">● 获取API Key</div>
+                        <ul style="margin:0 0 12px 0; padding-left:20px;">
+                            <li style="margin-bottom:4px;">选择心仪的供应商（推荐DeepSeek），点击“获取API Key”跳转至供应商官网，注册账号。如果您选择付费模型，需要小额充值，此充值全部归属于供应商，且可做其他用途。如果您不愿意充值，也可以选择智谱的免费模型。</li>
+                            <li>找到API密钥入口，创建一个API密钥。不要泄露此密钥！</li>
+                        </ul>
+                        <div style="font-weight:bold; margin-bottom:4px; font-size:14px; color:#0c4a6e;">● 使用API Key</div>
+                        <ul style="margin:0; padding-left:20px;">
+                            <li>在本程序中，选择心仪的供应商和模型，输入API Key即可。<br>由于本程序场景不需要强大的模型能力，建议选择价格较低的模型。</li>
+                        </ul>
+                    </div>
                     <div class="bse-settings-block"><label class="bse-settings-block-label">API 平台</label><select class="bse-settings-input" id="bse-s-platform">${pOptions}</select><div style="margin-top:8px;"><a id="bse-s-link" href="#" target="_blank" style="font-size:12px;color:var(--bse-primary);text-decoration:none;">获取 API Key →</a></div></div>
                     <div class="bse-settings-block" id="bse-url-wrapper" style="display: ${bse_platform === 'custom' ? 'block' : 'none'};"><label class="bse-settings-block-label">API URL Endpoint</label><input type="text" class="bse-settings-input" id="bse-s-url" value="${escapeHtml(API_URL)}"></div>
                     <div class="bse-settings-block"><label class="bse-settings-block-label">模型 (Model)</label><select class="bse-settings-input" id="bse-s-model-select"></select><input type="text" class="bse-settings-input" id="bse-s-model-custom" style="margin-top:8px;display:none;" placeholder="输入自定义模型名..." value="${escapeHtml(bse_model)}"></div>
-                    <div class="bse-settings-block"><label class="bse-settings-block-label">API Key</label><input type="password" class="bse-settings-input" id="bse-s-key" value="${escapeHtml(currentPlatformKey)}" placeholder="输入API Key.."></div>
+                    <div class="bse-settings-block">
+                        <label class="bse-settings-block-label">API Key</label>
+                        <input type="text" class="bse-settings-input bse-password-mask" id="bse-s-key" value="${escapeHtml(currentPlatformKey)}" placeholder="输入API Key...">
+                        <div style="font-size:12px;color:var(--bse-text-muted);margin-top:6px;">本程序不会上传API Key。请勿泄露您的API Key！</div>
+                    </div>
                 </div>
 
                 <div class="bse-settings-subgroup">
@@ -1293,9 +1388,14 @@
                 </div>
 
                 <div class="bse-settings-subgroup">
-                    <div class="bse-settings-subgroup-title">拓展功能</div>
+                    <div class="bse-settings-subgroup-title">广告跳过</div>
                     <div class="bse-settings-block"><label class="bse-settings-check-row"><input type="checkbox" id="bse-s-auto-skip" ${bse_auto_skip_ad ? 'checked' : ''}><div class="bse-settings-check-text"><span class="bse-settings-check-title">广告自动跳过</span><span class="bse-settings-check-desc">开启后检测到广告时段将自动跳过。关闭后仅在进度条标黄提示，不自动跳转。</span></div></label></div>
-                    <div class="bse-settings-block"><label class="bse-settings-check-row"><input type="checkbox" id="bse-s-opinion" ${enableOpinionAnalysis ? 'checked' : ''}><div class="bse-settings-check-text"><span class="bse-settings-check-title">舆论分析（热门评论）</span><span class="bse-settings-check-desc">开启后AI分析将获取前30条热门评论并包含对评论的舆论倾向分析。</span></div></label></div>
+                </div>
+
+                <div class="bse-settings-subgroup">
+                    <div class="bse-settings-subgroup-title">舆情分析</div>
+                    <div class="bse-settings-block"><label class="bse-settings-check-row"><input type="checkbox" id="bse-s-opinion" ${enableOpinionAnalysis ? 'checked' : ''}><div class="bse-settings-check-text"><span class="bse-settings-check-title">舆论分析（热门评论）</span><span class="bse-settings-check-desc">开启后AI分析将获取热门评论并包含对评论的舆论倾向分析。</span></div></label></div>
+                    <div class="bse-settings-block"><label class="bse-settings-block-label">获取评论数</label><input type="number" class="bse-settings-input" id="bse-s-opinion-count" value="${bse_opinion_comments_count}" min="0" max="100"></div>
                 </div>
             </div>
 
@@ -1307,7 +1407,7 @@
                 </div>
             </div>
 
-            <div class="bse-author-info"><div class="bse-ext-links"><a href="${GITHUB_REPO_URL}" target="_blank" class="bse-ext-link"><svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a><a href="${GREASYFORK_URL}" target="_blank" class="bse-ext-link"><svg viewBox="0 0 1024 1024"><path d="M514.56 514.56m-486.4 0a486.4 486.4 0 1 0 972.8 0 486.4 486.4 0 1 0-972.8 0Z"/><path d="M389.376 249.856c102.0416 103.0144 103.9872 105.8816 99.1744 141.5168-3.84 37.5296-3.84 37.5296 172.3392 216.576 97.2288 98.2016 177.152 183.8592 177.152 190.6176 0 26.9312-21.1968 49.1008-45.2608 49.1008-20.224 0-62.5664-36.5568-204.0832-177.152-153.088-152.1152-181.9648-176.1792-196.4032-168.448-31.744 18.2784-57.7536 0.9728-159.7952-101.0688-76.0832-76.0832-98.2016-103.9872-93.3888-117.4528 5.7856-14.4384 19.2512-3.84 82.7904 58.7264L298.9056 418.304l21.1968-21.1968 21.1968-21.1968-75.1104-75.9808c-50.0736-51.0464-71.2192-77.9776-63.5392-82.7904 7.68-4.8128 38.5024 20.224 85.6576 66.4064L361.472 356.7104l22.1184-21.1968 21.1968-22.1184-73.1648-73.1648C268.0832 175.7184 250.7776 144.896 277.7088 144.896c3.84 0 53.9136 47.2064 111.6672 104.96z" fill="#FFFFFF"/></svg>Greasy Fork</a><a href="${SCRIPTCAT_URL}" target="_blank" class="bse-ext-link"><svg t="1781970584196" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="14" height="14"><path fill="currentColor" d="M501.333333 273.322667c-63.146667 0-69.461333 6.698667-102.144 6.698666C371.968 280.021333 290.218667 213.333333 249.386667 213.333333c-40.874667 0-88.533333 24.021333-88.533334 93.354667v80c0.085333 20.992 7.68 85.333333 37.546667 68.138667-35.285333 41.728-38.826667 90.410667-38.357333 137.514666-9.514667 2.730667-19.2 5.845333-28.629334 9.045334-29.184 9.984-60.16 22.698667-74.112 31.744a32 32 0 0 0 34.730667 53.76c6.656-4.309333 30.762667-14.933333 60.074667-24.96l9.728-3.2c1.962667 18.474667 6.869333 35.413333 14.165333 50.773333l-1.024 0.554667c-17.493333 9.216-33.706667 19.84-44.032 26.581333l-4.821333 3.157333a32 32 0 1 0 34.730666 53.76l5.589334-3.669333c10.453333-6.826667 23.850667-15.573333 38.442666-23.253333 3.413333-1.834667 6.698667-3.456 9.856-4.949334C288.554667 830.933333 421.12 853.333333 501.333333 853.333333s212.778667-22.4 286.592-91.648c3.157333 1.493333 6.4 3.114667 9.856 4.949334 14.592 7.68 27.989333 16.426667 38.442667 23.253333l5.589333 3.669333a32 32 0 0 0 34.730667-53.76l-4.821333-3.157333a555.008 555.008 0 0 0-44.032-26.581333l-1.024-0.554667c7.296-15.36 12.202667-32.298667 14.165333-50.773333l9.728 3.2c29.312 10.026667 53.418667 20.650667 60.117333 24.96a32 32 0 0 0 34.688-53.76c-13.952-9.045333-44.928-21.76-74.069333-31.744-9.429333-3.2-19.157333-6.314667-28.672-9.088 0.512-47.104-3.072-95.744-38.4-137.472 29.866667 17.194667 37.546667-47.146667 37.589333-68.181334V306.688C841.813333 237.354667 794.154667 213.333333 753.28 213.333333c-40.832 0-122.581333 66.688-149.76 66.688-32.725333 0-39.04-6.698667-102.186667-6.698666z"/></svg>脚本猫(支持直连)</a></div><p class="bse-author-text">作者: <a href="[https://github.com/LiuMashiro](https://github.com/LiuMashiro)" target="_blank" class="bse-author-link">LiuMashiro</a></p><p class="bse-author-text" style="margin-top:8px;">字幕获取模块部分使用了M0M Chen的 视频字幕提取器Pro 代码（MIT）</p><p class="bse-author-text" style="margin-top:12px;font-size:12px;">当前版本: v${SCRIPT_VERSION}${updateBadgeHtml}</p></div>
+            <div class="bse-author-info"><div class="bse-ext-links"><a href="${GITHUB_REPO_URL}" target="_blank" class="bse-ext-link"><svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a><a href="${GREASYFORK_URL}" target="_blank" class="bse-ext-link"><svg viewBox="0 0 1024 1024"><path d="M514.56 514.56m-486.4 0a486.4 486.4 0 1 0 972.8 0 486.4 486.4 0 1 0-972.8 0Z"/><path d="M389.376 249.856c102.0416 103.0144 103.9872 105.8816 99.1744 141.5168-3.84 37.5296-3.84 37.5296 172.3392 216.576 97.2288 98.2016 177.152 183.8592 177.152 190.6176 0 26.9312-21.1968 49.1008-45.2608 49.1008-20.224 0-62.5664-36.5568-204.0832-177.152-153.088-152.1152-181.9648-176.1792-196.4032-168.448-31.744 18.2784-57.7536 0.9728-159.7952-101.0688-76.0832-76.0832-98.2016-103.9872-93.3888-117.4528 5.7856-14.4384 19.2512-3.84 82.7904 58.7264L298.9056 418.304l21.1968-21.1968 21.1968-21.1968-75.1104-75.9808c-50.0736-51.0464-71.2192-77.9776-63.5392-82.7904 7.68-4.8128 38.5024 20.224 85.6576 66.4064L361.472 356.7104l22.1184-21.1968 21.1968-22.1184-73.1648-73.1648C268.0832 175.7184 250.7776 144.896 277.7088 144.896c3.84 0 53.9136 47.2064 111.6672 104.96z" fill="#FFFFFF"/></svg>Greasy Fork</a><a href="${SCRIPTCAT_URL}" target="_blank" class="bse-ext-link"><svg t="1781970584196" class="icon" viewBox="0 0 1024 1024" version="1.1" xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" width="14" height="14"><path fill="currentColor" d="M501.333333 273.322667c-63.146667 0-69.461333 6.698667-102.144 6.698666C371.968 280.021333 290.218667 213.333333 249.386667 213.333333c-40.874667 0-88.533333 24.021333-88.533334 93.354667v80c0.085333 20.992 7.68 85.333333 37.546667 68.138667-35.285333 41.728-38.826667 90.410667-38.357333 137.514666-9.514667 2.730667-19.2 5.845333-28.629334 9.045334-29.184 9.984-60.16 22.698667-74.112 31.744a32 32 0 0 0 34.730667 53.76c6.656-4.309333 30.762667-14.933333 60.074667-24.96l9.728-3.2c1.962667 18.474667 6.869333 35.413333 14.165333 50.773333l-1.024 0.554667c-17.493333 9.216-33.706667 19.84-44.032 26.581333l-4.821333 3.157333a32 32 0 1 0 34.730666 53.76l5.589334-3.669333c10.453333-6.826667 23.850667-15.573333 38.442666-23.253333 3.413333-1.834667 6.698667-3.456 9.856-4.949334C288.554667 830.933333 421.12 853.333333 501.333333 853.333333s212.778667-22.4 286.592-91.648c3.157333 1.493333 6.4 3.114667 9.856 4.949334 14.592 7.68 27.989333 16.426667 38.442667 23.253333l5.589333 3.669333a32 32 0 0 0 34.730667-53.76l-4.821333-3.157333a555.008 555.008 0 0 0-44.032-26.581333l-1.024-0.554667c7.296-15.36 12.202667-32.298667 14.165333-50.773333l9.728 3.2c29.312 10.026667 53.418667 20.650667 60.117333 24.96a32 32 0 0 0 34.688-53.76c-13.952-9.045333-44.928-21.76-74.069333-31.744-9.429333-3.2-19.157333-6.314667-28.672-9.088 0.512-47.104-3.072-95.744-38.4-137.472 29.866667 17.194667 37.546667-47.146667 37.589333-68.181334V306.688C841.813333 237.354667 794.154667 213.333333 753.28 213.333333c-40.832 0-122.581333 66.688-149.76 66.688-32.725333 0-39.04-6.698667-102.186667-6.698666z"/></svg>脚本猫(支持直连)</a></div><p class="bse-author-text">作者: <a href="https://github.com/LiuMashiro" target="_blank" class="bse-author-link">LiuMashiro</a></p><p class="bse-author-text" style="margin-top:8px;">字幕获取模块部分使用了M0M Chen的 视频字幕提取器Pro 代码（MIT）</p><p class="bse-author-text" style="margin-top:12px;font-size:12px;">当前版本: v${SCRIPT_VERSION}${updateBadgeHtml}</p></div>
         </div>`);
         const pSelect = document.getElementById('bse-s-platform'); const urlWrapper = document.getElementById('bse-url-wrapper'); const urlInput = document.getElementById('bse-s-url'); const mSelect = document.getElementById('bse-s-model-select'); const mCustom = document.getElementById('bse-s-model-custom');
         const pLink = document.getElementById('bse-s-link'); const autoOpenCheckbox = document.getElementById('bse-s-auto-open'); const autoTabSelect = document.getElementById('bse-s-auto-tab');
@@ -1331,6 +1431,20 @@
             currentKeyInput.value = newPlatformKey;
         });
         mSelect.addEventListener('change', updateModelCustom); updateUIForPlatform(true);
+
+        const apiHintBtn = document.getElementById('bse-api-hint-btn');
+        const apiHintBox = document.getElementById('bse-api-hint-box');
+        if(apiHintBtn && apiHintBox) {
+            apiHintBtn.addEventListener('click', () => {
+                if (apiHintBox.style.display === 'none') {
+                    apiHintBox.style.display = 'block';
+                    apiHintBtn.textContent = '收起提示';
+                } else {
+                    apiHintBox.style.display = 'none';
+                    apiHintBtn.textContent = '查看使用提示';
+                }
+            });
+        }
     }
 
     // ===================== 23. 初始化与路由监听 =====================
