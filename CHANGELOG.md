@@ -8,7 +8,7 @@ All notable changes to this project will be documented in this file.
 - 新增自定义用于舆情分析获取的评论区评论数的功能
 - 原始文本查看功能中增加显示发送给 AI 的原始文本
 - 新增使用提示面板
-- 新增 HTTP 401 常见错误（未授权，常见于API写错了）错误中文提示
+- 新增 HTTP 401 等多个常见错误中文提示
 
 ### Changed
 - 功能引导文本优化
