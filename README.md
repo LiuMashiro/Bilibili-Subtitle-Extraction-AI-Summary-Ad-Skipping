@@ -2,8 +2,9 @@
 **Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping**
 
 实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**，并依据评论区热门评论进行舆情分析。
+> 如果您不愿意使用 API ，也可以关闭 API 功能，通过一键复制提示词实现问 AI 。
 
-  ![image.png](https://scriptcat.org/api/v2/resource/image/hj6QXAGhA9dh4C8N)
+![image.png](https://scriptcat.org/api/v2/resource/image/oZxGi1PeUsqFplG7)
 
 
 ## 主要功能
@@ -21,7 +22,7 @@
 
 ## 设置
 - 支持高度自定义设置和自定义API。
-![image.png](https://scriptcat.org/api/v2/resource/image/jUdOBxYLzHekoxGL)
+![image.png](https://scriptcat.org/api/v2/resource/image/l53H24ygYujfF5vM)
 
 ## 使用须知
 - 本脚本为个人编程学习、技术研究、代码练习用途开源免费分享，仅用于学习前端交互、网页脚本逻辑等，不用于任何商业盈利。
