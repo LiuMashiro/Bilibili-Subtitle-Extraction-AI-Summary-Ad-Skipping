@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - 全语言字幕支持
 - 调用二次确认：字幕字符数超过设定阈值时弹出确认提示，避免长视频意外消耗过多 Tokens，阈值支持自定义
 - 预览条数限制：可自定义浏览页最大渲染字幕数量
+- 支持手动清除储存和恢复出厂设置
 
 ### Changed
 - 面板位置将根据按钮位置而定
