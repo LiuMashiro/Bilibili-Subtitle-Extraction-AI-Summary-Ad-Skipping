@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - LaTeX 公式渲染：考虑到理工类视频总结的场景，引入 KaTeX 渲染引擎，支持 LeTaX 公式显示。由于可能存在问题，可在设置中独立开关
-- - 手动模式（禁用 API）：新增禁用 API 选项，无需配置 Key 也可复制完整提示词，粘贴到外部 AI 工具使用
+- 支持手动模式（禁用 API）：新增禁用 API 选项，无需配置 Key 也可复制完整提示词，粘贴到外部 AI 工具使用
 - 按钮、面板支持拖拽
 - 支持调整按钮默认位置
 - 支持字幕搜索
