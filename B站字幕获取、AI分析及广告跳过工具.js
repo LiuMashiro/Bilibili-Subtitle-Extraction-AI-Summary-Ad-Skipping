@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.0.1
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -40,7 +40,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.0.0';
+    const SCRIPT_VERSION = '2.0.1';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -247,8 +247,8 @@
             --bseas-shadow: 0 12px 40px -10px rgba(0,0,0,0.12), 0 4px 16px -4px rgba(0,0,0,0.06);
             --bseas-radius-lg: 20px; --bseas-radius-md: 14px; --bseas-radius-sm: 10px;
             --bseas-warning: #ffc107; --bseas-warning-bg: #fff3cd; --bseas-warning-border: #ffeeba; --bseas-warning-text: #856404;
-            --bseas-ad-bg: #fffbeb; --bseas-ad-border: #fbbf24; --bseas-ad-text: #92400e;
-            --bseas-ad-button: #f59e0b; --bseas-ad-button-hover: #FF8C00;
+            --bseas-ad-bg: #ffffff; --bseas-ad-border: #f59e0b; --bseas-ad-text: #92400e;
+            --bseas-ad-button: #f59e0b; --bseas-ad-button-hover: #d97706;
             --bseas-danger: #ff3b30;
             --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
             --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -301,6 +301,7 @@
         }
         .bseas-status-dot.state-yellow { display:block; background:#ff9500; transform:scale(1); animation: bseas-pulse 2.4s ease-in-out infinite; }
         .bseas-status-dot.state-green { display:block; background:#34c759; transform:scale(1); }
+        .bseas-status-dot.state-red { display:block; background:#ef4444; transform:scale(1); animation: bseas-pulse 1.4s ease-in-out infinite; }
         @keyframes bseas-pulse {
             0%, 100% { box-shadow: 0 0 0 0 rgba(255,149,0,0.45); }
             50% { box-shadow: 0 0 0 5px rgba(255,149,0,0); }
@@ -312,7 +313,7 @@
         @keyframes bseas-panel-out { 0%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0;transform:translateY(-10px) scale(0.95)} }
         @keyframes bseas-tab-in-right { from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none} }
         @keyframes bseas-tab-in-left { from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none} }
-        .bseas-panel { position:absolute; width:430px; height:min(calc(100vh - 120px),66vh); background:var(--bseas-bg-glass); backdrop-filter:blur(24px); border-radius:var(--bseas-radius-lg); box-shadow:var(--bseas-shadow); border:1px solid rgba(255,255,255,0.4); display:none; flex-direction:column; overflow:hidden; left:0; animation:bseas-panel-in 0.28s var(--ease-spring); transition:margin-left 0.45s var(--ease-spring), top 0.4s var(--ease-spring), bottom 0.4s var(--ease-spring); }
+        .bseas-panel { position:absolute; width:430px; height:min(calc(100vh - 120px),66vh); background:var(--bseas-bg-glass); backdrop-filter:blur(24px); border-radius:var(--bseas-radius-lg); box-shadow:var(--bseas-shadow); border:1px solid rgba(255,255,255,0.4); display:none; flex-direction:column; overflow:hidden; left:0; animation:bseas-panel-in 0.28s var(--ease-spring); transition:top 0.4s var(--ease-spring), bottom 0.4s var(--ease-spring); }
         .bseas-panel.show { display:flex; }
         .bseas-panel.hiding { animation:bseas-panel-out 0.22s var(--ease-standard) forwards; }
         .bseas-panel.no-transition { transition:none !important; }
@@ -323,7 +324,7 @@
         .bseas-subtitle-info { font-size:13px; color:var(--bseas-text-dim); margin-top:2px; font-weight:500; transition:color 0.3s; }
         .bseas-ad-hint { font-size:12px; color:var(--bseas-text-muted); margin-top:1px; font-weight:400; display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
         .bseas-header-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
-        .bseas-icon-btn { width:34px; height:34px; border-radius:var(--bseas-radius-sm); background:var(--bseas-bg-card); border:1px solid var(--bseas-border); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--bseas-text-dim); transition:all 0.2s; text-decoration:none; }
+        .bseas-icon-btn { width:34px; height:34px; border-radius:var(--bseas-radius-sm); background:#ffffff; border:1px solid var(--bseas-border); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--bseas-text-dim); transition:all 0.2s; text-decoration:none; }
         .bseas-icon-btn:hover { background:#e2e8f0; color:var(--bseas-text); transform:scale(1.05); }
         .bseas-icon-btn:active { transform:scale(0.95); }
         .bseas-icon-btn svg { width:18px; height:18px; fill:currentColor; transition:transform 0.4s ease; }
@@ -394,10 +395,13 @@
         .bseas-search-input:focus { outline:none; border-color:var(--bseas-primary); box-shadow:0 0 0 3px rgba(0,174,236,0.1); }
         .bseas-search-count { position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:12px; color:var(--bseas-text-muted); pointer-events:none; }
         .bseas-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:16px; }
-        .bseas-stat-item { background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:14px; text-align:center; transition:all 0.2s; }
+        .bseas-stat-item { background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:14px 8px; text-align:center; transition:all 0.2s; min-width:0; overflow:hidden; }
         .bseas-stat-item:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,0.06); }
-        .bseas-stat-label { font-size:12px; font-weight:600; color:var(--bseas-text-dim); margin-bottom:6px; }
+        .bseas-stat-label { font-size:12px; font-weight:600; color:var(--bseas-text-dim); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .bseas-stat-value { font-size:20px; font-weight:800; color:var(--bseas-text); transition:color 0.2s; }
+        .bseas-stat-item.bseas-stat-compact .bseas-stat-label { overflow:hidden; text-overflow:clip; }
+        .bseas-stat-item.bseas-stat-compact .bseas-stat-label > span { display:inline-block; animation:bseas-marquee 8s linear infinite alternate; }
+        @keyframes bseas-marquee { 0% { transform:translateX(0); } 100% { transform:translateX(var(--marquee-distance, 0px)); } }
         .bseas-stat-item:hover .bseas-stat-value { color:var(--bseas-primary); }
         .bseas-subtitle-item { padding:14px 16px; margin-bottom:10px; background:white; border-radius:var(--bseas-radius-md); border:1px solid var(--bseas-border); cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); display:flex; flex-direction:column; gap:6px; position:relative; overflow:hidden; }
         .bseas-subtitle-item::before { content:''; position:absolute; left:0; top:0; width:3px; height:0; background:var(--bseas-primary); transition:height 0.3s ease; }
@@ -432,26 +436,32 @@
         .bseas-markdown code { background:#f1f5f9; color:var(--bseas-primary); padding:2px 6px; border-radius:4px; font-size:13.5px; }
         .bseas-markdown blockquote { border-left:4px solid var(--bseas-primary); margin:14px 0; padding:10px 16px; background:#f0f9ff; border-radius:0 var(--bseas-radius-sm) var(--bseas-radius-sm) 0; color:var(--bseas-text-dim); }
         .bseas-markdown hr { border:none; height:1px; background:var(--bseas-border); margin:20px 0; }
-        .bseas-sp-box { border-radius:24px; padding:16px 20px; margin-bottom:16px; display:flex; flex-direction:column; gap:10px; }
-        .bseas-sp-box.status-found { background:var(--bseas-ad-bg); border:2px solid var(--bseas-ad-border); box-shadow:0 4px 16px rgba(251,191,36,0.15); }
+        .bseas-sp-box { border-radius:var(--bseas-radius-md); padding:16px 20px; margin-bottom:16px; display:flex; flex-direction:column; gap:10px; }
+        .bseas-sp-box.status-found { background:var(--bseas-ad-bg); border:1px solid var(--bseas-ad-border); box-shadow:0 4px 12px rgba(245,158,11,0.12); padding:0; gap:0; }
+        .status-found .bseas-sp-header-bar { background:var(--bseas-ad-button); color:white; font-size:16px; font-weight:500; padding:10px 16px; line-height:1.3; border-radius:13px 13px 0 0; }
+        .status-found .bseas-sp-body { padding:16px 20px; display:flex; flex-direction:column; gap:14px; }
+        .status-found .bseas-sp-msg { font-size:14px; font-weight:400; color:#000000; line-height:1.5; }
+        .status-found .bseas-sp-action-row { display:flex; align-items:stretch; gap:12px; margin:0; }
+        .status-found .bseas-sp-badge { flex:1; background:#f3f4f6; border:none; border-radius:var(--bseas-radius-sm); padding:9px 20px; font-size:14px; font-weight:500; color:#000000; display:flex; align-items:center; justify-content:flex-start; }
+        .status-found .bseas-sp-skip { background:var(--bseas-ad-button); color:white; border:none; border-radius:var(--bseas-radius-sm); padding:9px 22px; font-size:14px; font-weight:500; cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 2px 8px rgba(245,158,11,0.25); flex-shrink:0; white-space:nowrap; }
+        .status-found .bseas-sp-skip:hover { background:var(--bseas-ad-button-hover); transform:translateY(-1px); box-shadow:0 4px 12px rgba(245,158,11,0.35); }
+        .status-found .bseas-sp-skip:active { transform:translateY(0) scale(0.98); }
         .bseas-sp-box.status-none { background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%); border:1px solid #22c55e; box-shadow:0 4px 12px rgba(34,197,94,0.1); }
         .bseas-sp-box.status-err { background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%); border:1px solid #ef4444; box-shadow:0 4px 12px rgba(239,68,68,0.1); }
         .bseas-sp-header { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
         .bseas-sp-icon { width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:bold; flex-shrink:0; }
-        .status-found .bseas-sp-icon { background:#FF8C00; color:white; box-shadow:0 2px 8px rgba(217,119,6,0.4); }
         .status-none .bseas-sp-icon { background:#22c55e; color:white; box-shadow:0 2px 8px rgba(34,197,94,0.3); }
         .status-err .bseas-sp-icon { background:#ef4444; color:white; box-shadow:0 2px 8px rgba(239,68,68,0.3); }
         .bseas-sp-title { font-size:14px; font-weight:700; flex:1; }
-        .status-found .bseas-sp-title { color:var(--bseas-ad-text); }
         .status-none .bseas-sp-title { color:#166534; }
         .status-err .bseas-sp-title { color:#991b1b; }
-        .bseas-sp-badge { background:white; border:1px solid var(--bseas-ad-border); border-radius:10px; padding:6px 12px; font-family:monospace; font-size:13px; font-weight:700; color:var(--bseas-ad-text); box-shadow:0 2px 4px rgba(0,0,0,0.05); }
+        .bseas-sp-badge { background:white; border:1px solid var(--bseas-ad-border); border-radius:10px; padding:6px 12px; font-family:monospace; font-size:13px; font-weight:700; color:#000000; box-shadow:none; }
         .bseas-sp-action-row { display:flex; align-items:center; gap:10px; margin-left:34px; }
         .bseas-sp-action-row .bseas-sp-badge { flex:1; }
         .bseas-sp-skip { background:var(--bseas-ad-button); color:white; border:none; border-radius:10px; padding:8px 16px; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 2px 8px rgba(245,158,11,0.3); flex-shrink:0; }
         .bseas-sp-skip:hover { background:var(--bseas-ad-button-hover); transform:translateY(-2px) scale(1.02); box-shadow:0 4px 12px rgba(245,158,11,0.4); }
         .bseas-sp-skip:active { transform:translateY(0) scale(0.98); }
-        .bseas-sp-hint { font-size:12px; color:#b45309; margin-left:34px; }
+        .bseas-sp-hint { font-size:12px; color:#000000; margin-left:34px; }
         .bseas-followup-section { margin-top:4px; background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:16px; transition:box-shadow 0.2s; }
         .bseas-followup-section:hover { box-shadow:0 4px 12px rgba(0,0,0,0.04); }
         .bseas-followup-label { font-size:13px; font-weight:700; color:var(--bseas-primary); margin-bottom:10px; display:flex; align-items:center; gap:6px; }
@@ -467,7 +477,6 @@
         .bseas-noapi-box { background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-md); padding:16px; margin-bottom:16px; }
         .bseas-noapi-title { font-size:14px; font-weight:700; color:var(--bseas-warning-text); margin-bottom:8px; display:flex; align-items:center; gap:6px; }
         .bseas-noapi-desc { font-size:13px; color:var(--bseas-warning-text); line-height:1.6; margin-bottom:12px; }
-        /* ===== Settings page (iOS Settings grouped style) ===== */
         .bseas-settings { padding:8px 0 4px; }
         .bseas-settings-section { margin-bottom:28px; }
         .bseas-settings-section:last-child { margin-bottom:8px; }
@@ -503,23 +512,24 @@
         .bseas-settings-link-row a { font-size:12px; color: var(--bseas-primary); text-decoration: none; font-weight:500; }
         .bseas-settings-link-row a:hover { text-decoration: underline; }
 
-        /* iOS-style toggle switch */
         .bseas-toggle { position: relative; display: inline-block; width: 44px; height: 28px; flex-shrink: 0; vertical-align: middle; }
         .bseas-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
         .bseas-toggle-slider { position: absolute; inset: 0; background: rgba(120,120,128,0.22); border-radius: 999px; cursor: pointer; transition: background 0.35s var(--ease-out); }
-        .bseas-toggle-slider::before { content: ''; position: absolute; width: 24px; height: 24px; left: 2px; top: 2px; background: white; border-radius: 50%; box-shadow: 0 3px 6px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(0,0,0,0.04); transition: transform 0.45s var(--ease-spring), width 0.2s var(--ease-out); }
+        .bseas-toggle-slider::before { content: ''; position: absolute; width: 24px; height: 24px; left: 2px; top: 2px; background: white; border-radius: 50%; box-shadow: 0 3px 6px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(0,0,0,0.04); transition: transform 0.45s var(--ease-spring), width 0.2s var(--ease-spring); }
         .bseas-toggle:hover .bseas-toggle-slider::before { width: 26px; }
         .bseas-toggle input:checked + .bseas-toggle-slider { background: #34c759; }
         .bseas-toggle input:checked + .bseas-toggle-slider::before { transform: translateX(16px); }
+        .bseas-toggle:hover input:checked + .bseas-toggle-slider::before { transform: translateX(14px); }
         .bseas-toggle:active .bseas-toggle-slider::before { width: 26px; }
+        .bseas-toggle:active input:checked + .bseas-toggle-slider::before { transform: translateX(14px); }
         .bseas-toggle input:disabled + .bseas-toggle-slider { opacity: 0.45; cursor: default; }
         .bseas-settings-row-action .bseas-toggle { }
 
         .bseas-password-mask { -webkit-text-security:disc; }
-        .bseas-danger-link { display:inline-block; color: var(--bseas-danger); font-size:12.5px; text-decoration:none; cursor:pointer; transition: color 0.2s; }
-        .bseas-danger-link:hover { color: #c4281f; text-decoration: underline; }
-        #bseas-clear-cache { color: var(--bseas-primary); }
-        #bseas-clear-cache:hover { color: var(--bseas-warning); }
+        .bseas-danger-link { display:inline-block; color: var(--bseas-danger); font-size:12.5px; text-decoration:none; cursor:pointer; transition: text-decoration 0.2s; }
+        .bseas-danger-link:hover { text-decoration: underline; }
+        #bseas-clear-cache { color: #d97706; }
+        #bseas-storage-usage.warn { color: #d97706; font-weight:600; }
 
         .bseas-author-info { margin-top:20px; padding-top:18px; border-top: 0.5px solid var(--bseas-border); text-align:center; }
         .bseas-author-text { font-size:12px; color: var(--bseas-text-muted); }
@@ -577,7 +587,8 @@
     let panelVisible = false;
     let currentTab = 'preview';
     let isLoading = false;
-    let showTimestamps = true;
+    let showTimestamps = GM_getValue('bseas_show_timestamps', true);
+    let showPreviewCharsWithTs = false;
     let showRawAIText = false;
     let sourceCollapsed = true;
     let currentVideoKey = null;
@@ -611,9 +622,9 @@
         const result = {};
         for (const key of Object.keys(raw)) {
             const val = raw[key];
-            if (typeof val === 'string') result[key] = { prompt: '', summary: val, qa: [] };
+            if (typeof val === 'string') result[key] = { prompt: '', summary: val, qa: [], ts: 0 };
             else if (val && typeof val === 'object' && typeof val.summary === 'string') {
-                result[key] = { prompt: typeof val.prompt === 'string' ? val.prompt : '', summary: val.summary, qa: Array.isArray(val.qa) ? val.qa : [] };
+                result[key] = { prompt: typeof val.prompt === 'string' ? val.prompt : '', summary: val.summary, qa: Array.isArray(val.qa) ? val.qa : [], ts: typeof val.ts === 'number' ? val.ts : 0 };
             }
         }
         return result;
@@ -624,7 +635,7 @@
     function setCachedSummary(videoKey, prompt, summary) {
         const existing = aiSummaryCache[videoKey];
         const qa = (existing && Array.isArray(existing.qa)) ? existing.qa : [];
-        aiSummaryCache[videoKey] = { prompt, summary, qa };
+        aiSummaryCache[videoKey] = { prompt, summary, qa, ts: Date.now() };
         GM_setValue('aiSummaryCache', aiSummaryCache);
     }
     function appendCachedQA(videoKey, q, a) {
@@ -632,6 +643,7 @@
         if (!entry) return;
         if (!Array.isArray(entry.qa)) entry.qa = [];
         entry.qa.push({ q, a });
+        entry.ts = Date.now();
         GM_setValue('aiSummaryCache', aiSummaryCache);
     }
 
@@ -718,6 +730,45 @@
             badge.className = 'bseas-update-badge'; badge.textContent = '新版本 v' + latestVersion;
             hint.appendChild(badge);
         }
+    }
+    function getStorageUsageBytes() {
+        let totalBytes = 0;
+        const keys = GM_listValues();
+        for (const k of keys) {
+            try { totalBytes += new Blob([JSON.stringify(GM_getValue(k, ''))]).size; } catch (e) {}
+        }
+        return totalBytes;
+    }
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+    function updateStorageUsageDisplay() {
+        const el = document.getElementById('bseas-storage-usage');
+        if (!el) return;
+        const bytes = getStorageUsageBytes();
+        el.textContent = '已用：' + formatBytes(bytes);
+        el.classList.toggle('warn', bytes > 4 * 1024 * 1024);
+    }
+    function checkStorageSize() {
+        const totalBytes = getStorageUsageBytes();
+        updateStorageUsageDisplay();
+        if (totalBytes <= 5 * 1024 * 1024) return;
+        const entries = Object.entries(aiSummaryCache);
+        if (entries.length === 0) return;
+        entries.sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
+        const removeCount = Math.floor(entries.length / 2);
+        if (removeCount < 1) return;
+        for (let i = 0; i < removeCount; i++) delete aiSummaryCache[entries[i][0]];
+        GM_setValue('aiSummaryCache', aiSummaryCache);
+        showToast(`⚠ 储存空间超限，已自动清理 ${removeCount} 条旧记录`, 'warning');
+        const dot = document.querySelector('.bseas-status-dot');
+        if (dot) {
+            dot.className = 'bseas-status-dot state-red';
+            setTimeout(() => updateDotState(), 6000);
+        }
+        updateStorageUsageDisplay();
     }
 
     // ===================== 11. 进度条广告标记 =====================
@@ -1242,52 +1293,55 @@
         if (hasUpdate) showUpdateBadgeInPanel();
         window.addEventListener('resize', () => {
             const container = document.querySelector('.bseas-container');
-            if (container) applySavedPanelPosition(container);
+            if (!container) return;
+            const panel = container.querySelector('.bseas-panel');
+            if (panel) panel.classList.add('no-transition');
+            applySavedPanelPosition(container);
+            if (panel) requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('no-transition')));
         });
     }
     function applySavedPanelPosition(container) {
         const panel = container.querySelector('.bseas-panel');
         if (!panel) return;
 
-        const winW = window.innerWidth;
-        const winH = window.innerHeight;
+        const winW = document.documentElement.clientWidth;
+        const winH = document.documentElement.clientHeight;
         const manualPos = GM_getValue('bseas_panel_position', null);
         const preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
         const TRIGGER_W = 60;
-        const PANEL_W = 430;
-        const RIGHT_ANCHOR_MARGIN = TRIGGER_W - PANEL_W;
 
         container.style.left = 'auto';
         container.style.right = 'auto';
         container.style.top = 'auto';
         container.style.bottom = 'auto';
 
-        panel.style.left = '0';
-        panel.style.right = 'auto';
-
         if (manualPos) {
             if (manualPos.side === 'left') {
                 container.style.left = Math.max(8, Math.min(winW - TRIGGER_W - 8, manualPos.dist)) + 'px';
                 container.style.right = 'auto';
-                panel.style.marginLeft = '0px';
+                panel.style.left = '0';
+                panel.style.right = 'auto';
             } else {
                 container.style.right = Math.max(8, Math.min(winW - TRIGGER_W - 8, manualPos.dist)) + 'px';
                 container.style.left = 'auto';
-                panel.style.marginLeft = RIGHT_ANCHOR_MARGIN + 'px';
+                panel.style.right = '0';
+                panel.style.left = 'auto';
             }
             container.style.top = Math.max(8, Math.min(winH - TRIGGER_W - 8, manualPos.top)) + 'px';
             container.style.bottom = 'auto';
-            panel.style.top = '66px';
-            panel.style.bottom = 'auto';
+            if (manualPos.top < winH / 2) { panel.style.top = '66px'; panel.style.bottom = 'auto'; }
+            else { panel.style.bottom = '66px'; panel.style.top = 'auto'; }
         } else {
             if (preset.includes('left')) {
                 container.style.left = '24px';
                 container.style.right = 'auto';
-                panel.style.marginLeft = '0px';
+                panel.style.left = '0';
+                panel.style.right = 'auto';
             } else {
                 container.style.right = '24px';
                 container.style.left = 'auto';
-                panel.style.marginLeft = RIGHT_ANCHOR_MARGIN + 'px';
+                panel.style.right = '0';
+                panel.style.left = 'auto';
             }
             if (preset.includes('top')) {
                 container.style.top = '80px';
@@ -1333,8 +1387,8 @@
                 }
                 if (isDragging) {
                     let x = e.clientX - offsetX, y = e.clientY - offsetY;
-                    x = Math.max(8, Math.min(window.innerWidth - container.offsetWidth - 8, x));
-                    y = Math.max(8, Math.min(window.innerHeight - 60, y));
+                    x = Math.max(8, Math.min(document.documentElement.clientWidth - container.offsetWidth - 8, x));
+                    y = Math.max(8, Math.min(document.documentElement.clientHeight - 60, y));
                     container.style.left = x + 'px';
                     container.style.top = y + 'px';
                 }
@@ -1345,9 +1399,8 @@
                 if (isDragging) {
                     isDragging = false;
                     document.body.style.userSelect = '';
-                    panel.classList.remove('no-transition');
                     const rect = container.getBoundingClientRect();
-                    const winW = window.innerWidth;
+                    const winW = document.documentElement.clientWidth;
                     let side, dist;
                     if (rect.left + rect.width / 2 < winW / 2) {
                         side = 'left';
@@ -1358,6 +1411,7 @@
                     }
                     GM_setValue('bseas_panel_position', { side, dist, top: rect.top });
                     applySavedPanelPosition(container);
+                    requestAnimationFrame(() => requestAnimationFrame(() => { panel.classList.remove('no-transition'); }));
                     if (isTrigger) element._wasDragged = true;
                 }
             };
@@ -1582,8 +1636,9 @@
         const cnt = body.length;
         const dur = body[cnt - 1].to;
         const chars = body.reduce((s, i) => s + i.content.length, 0);
+        const charsWithTs = getTimestampedTextForAI().length;
         const searchBox = `<div class="bseas-search-box"><input type="text" id="bseas-subtitle-search" class="bseas-search-input" placeholder="搜索字幕内容..." value="${escapeHtml(subtitleSearchKeyword)}">${subtitleSearchKeyword ? `<span class="bseas-search-count">${filtered.length} 条</span>` : ''}</div>`;
-        const stats = `<div class="bseas-stats"><div class="bseas-stat-item"><div class="bseas-stat-label">总条数</div><div class="bseas-stat-value">${cnt}</div></div><div class="bseas-stat-item"><div class="bseas-stat-label">总时长</div><div class="bseas-stat-value">${formatTime(dur)}</div></div><div class="bseas-stat-item"><div class="bseas-stat-label">总字数</div><div class="bseas-stat-value">${chars}</div></div></div>`;
+        const stats = `<div class="bseas-stats"><div class="bseas-stat-item"><div class="bseas-stat-label">总条数</div><div class="bseas-stat-value">${cnt}</div></div><div class="bseas-stat-item"><div class="bseas-stat-label">总时长</div><div class="bseas-stat-value">${formatTime(dur)}</div></div><div class="bseas-stat-item ${showPreviewCharsWithTs ? 'bseas-stat-compact' : ''}" id="bseas-chars-toggle" style="cursor:pointer;" title="点击切换"><div class="bseas-stat-label"><span>${showPreviewCharsWithTs ? '总字数（带时间戳）' : '总字数'}</span></div><div class="bseas-stat-value">${showPreviewCharsWithTs ? charsWithTs : chars}</div></div></div>`;
         safeSetInnerHTML(el, searchBox + stats + `<div id="bseas-subtitle-list-container">${buildSubtitleListHtml(filtered)}</div>`);
         const searchInput = el.querySelector('#bseas-subtitle-search');
         if (searchInput) {
@@ -1605,6 +1660,26 @@
                 }, 200);
             });
         }
+        el.querySelector('#bseas-chars-toggle')?.addEventListener('click', () => {
+            showPreviewCharsWithTs = !showPreviewCharsWithTs;
+            const item = el.querySelector('#bseas-chars-toggle');
+            if (item) {
+                item.classList.toggle('bseas-stat-compact', showPreviewCharsWithTs);
+                const span = item.querySelector('.bseas-stat-label > span');
+                span.textContent = showPreviewCharsWithTs ? '总字数（带时间戳）' : '总字数';
+                item.querySelector('.bseas-stat-value').textContent = showPreviewCharsWithTs ? charsWithTs : chars;
+                if (showPreviewCharsWithTs) {
+                    requestAnimationFrame(() => {
+                        const label = item.querySelector('.bseas-stat-label');
+                        const distance = Math.max(0, span.scrollWidth - label.clientWidth);
+                        item.style.setProperty('--marquee-distance', `-${distance}px`);
+                        span.style.animation = 'none';
+                        void span.offsetWidth;
+                        span.style.animation = '';
+                    });
+                }
+            }
+        });
         bindSubtitleItemClicks(el);
     }
 
@@ -1640,13 +1715,13 @@
             if (showRawAIText) {
                 const userText = cachedPrompt || (aiConversationHistory.length > 0 ? (aiConversationHistory[0].fullContent || aiConversationHistory[0].content) : '');
                 const aiText = aiConversationHistory.length > 1 ? aiConversationHistory[1].content : cachedSummary;
-                html += `<div style="position:relative;">${retryHtml}<div style="font-size:13px;font-weight:bold;color:var(--bseas-text);margin-bottom:8px;">发给AI的原始文本：</div><textarea class="bseas-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;margin-bottom:16px;">${escapeHtml(userText)}</textarea><div style="font-size:13px;font-weight:bold;color:var(--bseas-text);margin-bottom:8px;">AI返回的原始文本：</div><textarea class="bseas-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;">${escapeHtml(aiText)}</textarea></div>`;
+                html += `<div style="position:relative;"><div style="font-size:13px;font-weight:bold;color:var(--bseas-text);margin-bottom:8px;">发给AI的原始文本：</div><textarea class="bseas-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;margin-bottom:16px;">${escapeHtml(userText)}</textarea><div style="font-size:13px;font-weight:bold;color:var(--bseas-text);margin-bottom:8px;">AI返回的原始文本：</div><textarea class="bseas-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;">${escapeHtml(aiText)}</textarea></div>`;
             } else {
                 const adData = lastAdCheckResult || extractAdSegments(cachedSummary);
                 if (!lastAdCheckResult) lastAdCheckResult = adData;
                 adSegments = adData.segments;
                 if (adSegments.length > 0) initProgressMark();
-                if (adData.type === 'has_ad' && adSegments.length > 0) html += `<div class="bseas-sp-box status-found"><div class="bseas-sp-header"><span class="bseas-sp-icon">!</span><span class="bseas-sp-title">检测到视频植入广告</span></div><div class="bseas-sp-hint">${bseas_auto_skip_ad ? '进度条已标黄提示，将自动跳过' : '进度条已标黄提示，自动跳过已关闭'}</div><div class="bseas-sp-action-row"><span class="bseas-sp-badge">${adSegments[0].startStr} - ${adSegments[0].endStr}</span><button class="bseas-sp-skip" data-end="${adSegments[0].end}">立即跳过</button></div></div>`;
+                if (adData.type === 'has_ad' && adSegments.length > 0) html += `<div class="bseas-sp-box status-found"><div class="bseas-sp-header-bar"><svg viewBox="0 0 1024 1024" width="22" height="22" style="vertical-align:-5px;margin-right:8px;"><path d="M570.7264 870.1952l1.0752-0.9216a35.2256 35.2256 0 0 1-35.2256-35.2256v-158.1568l-1.2288 0.1024c-44.4928 3.9424-88.576 10.9568-132.096 21.1456-54.5792 12.9024-104.96 30.208-149.7088 51.456a502.9888 502.9888 0 0 0-138.1376 95.744l-3.9424 4.1472-0.1024 0.1024c-8.704 9.216-18.5344 19.8144-31.488 19.8144a28.8768 28.8768 0 0 1-21.4528-8.5504 27.5456 27.5456 0 0 1-7.168-21.248c0.512-8.0896 1.5872-16.128 3.328-24.0128v-0.4096l0.5632-2.6624v-0.2048c2.3552-14.2336 12.3392-66.048 43.7248-136.6016a617.984 617.984 0 0 1 73.6256-124.8256 546.304 546.304 0 0 1 125.952-119.296c10.7008-7.9872 107.6736-78.2336 237.2096-100.4544l0.8704-0.1536V188.8256a35.2768 35.2768 0 0 1 58.624-26.4192l366.1824 322.048a35.4304 35.4304 0 0 1 0.1024 52.9408l-366.2336 323.072a35.4816 35.4816 0 0 1-23.3984 8.8064l1.0752 1.1264-2.1504-0.2048z" fill="#ffffff"></path></svg>检测到视频植入广告</div><div class="bseas-sp-body"><div class="bseas-sp-msg">${bseas_auto_skip_ad ? '进度条已标黄提示，将自动跳过' : '进度条已标黄提示，自动跳过已关闭'}</div><div class="bseas-sp-action-row"><span class="bseas-sp-badge">${adSegments[0].startStr} - ${adSegments[0].endStr}</span><button class="bseas-sp-skip" data-end="${adSegments[0].end}">立即跳过<svg viewBox="0 0 1024 1024" width="14" height="14" style="vertical-align:-2px;margin-left:4px;"><path d="M276.755 942.936c28.497 29.315 74.739 29.315 103.307 0l367.236-378.011c28.483-29.367 28.483-76.982 0-106.291l-367.236-377.997c-28.562-29.367-74.806-29.367-103.307 0-28.546 29.325-28.546 76.929 0 106.304l315.6 324.841-315.599 324.803c-28.545 29.367-28.544 76.973 0 106.356l0 0z" fill="#ffffff"></path></svg></button></div></div></div>`;
                 else if (adData.type === 'none') html += `<div class="bseas-sp-box status-none"><div class="bseas-sp-header"><span class="bseas-sp-icon">✓</span><span class="bseas-sp-title">未检测到视频植入广告</span></div></div>`;
                 else html += `<div class="bseas-sp-box status-err"><div class="bseas-sp-header"><span class="bseas-sp-icon">⚠</span><span class="bseas-sp-title">广告时间段格式解析异常</span></div></div>`;
                 const displaySummary = stripAdLine(cachedSummary);
@@ -1715,7 +1790,19 @@
         }
         document.getElementById('bseas-generate-btn')?.addEventListener('click', doGenerate);
         document.getElementById('bseas-retry-btn')?.addEventListener('click', doGenerate);
-        document.getElementById('bseas-raw-toggle')?.addEventListener('change', e => { showRawAIText = e.target.checked; renderAITab(el); });
+        document.getElementById('bseas-raw-toggle')?.addEventListener('change', e => {
+            const oldToggle = document.getElementById('bseas-raw-toggle');
+            const oldRect = oldToggle ? oldToggle.getBoundingClientRect() : null;
+            showRawAIText = e.target.checked;
+            renderAITab(el);
+            if (oldRect) {
+                const newToggle = document.getElementById('bseas-raw-toggle');
+                if (newToggle) {
+                    const newRect = newToggle.getBoundingClientRect();
+                    el.scrollTop += (newRect.top - oldRect.top);
+                }
+            }
+        });
         el.querySelector('.bseas-sp-skip')?.addEventListener('click', e => { e.stopPropagation(); seekToTime(parseFloat(e.currentTarget.dataset.end)); });
         const fBtn = document.getElementById('bseas-followup-btn');
         const fInput = document.getElementById('bseas-followup-input');
@@ -1762,8 +1849,8 @@
     // ===================== 22. 文本页渲染 =====================
     function renderTextTab(el) {
         if (!currentSubtitleData?.body?.length) { safeSetInnerHTML(el, '<div class="bseas-empty">暂无数据</div>'); return; }
-        safeSetInnerHTML(el, `<div class="bseas-text-controls"><label class="bseas-checkbox-label"><input type="checkbox" id="bseas-ts-toggle" ${showTimestamps ? 'checked' : ''}>显示时间戳</label><span style="font-size:12px;color:var(--bseas-text-muted);">${showTimestamps ? '格式:[MM:SS.ms]' : '纯文本'}</span></div><textarea class="bseas-text-area" id="bseas-text-out" readonly>${escapeHtml(getFormattedText())}</textarea>`);
-        document.getElementById('bseas-ts-toggle')?.addEventListener('change', e => { showTimestamps = e.target.checked; document.getElementById('bseas-text-out').value = getFormattedText(); });
+        safeSetInnerHTML(el, `<div class="bseas-text-controls"><label class="bseas-checkbox-label"><input type="checkbox" id="bseas-ts-toggle" ${showTimestamps ? 'checked' : ''}>包含时间戳</label><span id="bseas-ts-hint" style="font-size:12px;color:var(--bseas-text-muted);">${showTimestamps ? '格式:[MM:SS.ms] 将同步影响.txt文件下载' : '将同步影响.txt文件下载'}</span></div><textarea class="bseas-text-area" id="bseas-text-out" readonly>${escapeHtml(getFormattedText())}</textarea>`);
+        document.getElementById('bseas-ts-toggle')?.addEventListener('change', e => { showTimestamps = e.target.checked; GM_setValue('bseas_show_timestamps', showTimestamps); document.getElementById('bseas-text-out').value = getFormattedText(); const hint = document.getElementById('bseas-ts-hint'); if (hint) hint.textContent = showTimestamps ? '格式:[MM:SS.ms] 将同步影响.txt文件下载' : '将同步影响.txt文件下载'; });
     }
 
     // ===================== 23. 设置页渲染 =====================
@@ -1847,7 +1934,7 @@
             <div class="bseas-settings-row inline">
                 <div class="bseas-settings-row-content">
                     <div class="bseas-settings-row-label">启用二次确认</div>
-                    <div class="bseas-settings-row-desc">启用后，当字数超过限制时，AI分析前将向您二次确认。</div>
+                    <div class="bseas-settings-row-desc">启用后，当字数超过限制时，AI分析前将向您二次确认，以免浪费Tokens。</div>
                 </div>
                 <div class="bseas-settings-row-action">
                     <label class="bseas-toggle">
@@ -1859,7 +1946,7 @@
             <div class="bseas-settings-row">
                 <label class="bseas-settings-stack-label">二次确认字数阈值</label>
                 <input type="number" class="bseas-settings-input" id="bseas-s-confirm-chars" value="${bseas_confirm_chars}" min="1000" ${!bseas_confirm_enabled ? 'disabled' : ''}>
-                <div class="bseas-settings-hint">当字幕文字量超过此阈值时需要二次确认，以免浪费 Tokens。此处字数包括时间戳。</div>
+                <div class="bseas-settings-hint">此处字数包括时间戳。</div>
             </div>
         </div>
     </section>
@@ -1899,8 +1986,9 @@
                 </div>
             </div>
             <div class="bseas-settings-row">
-                <label class="bseas-settings-stack-label">最大获取评论数</label>
+                <label class="bseas-settings-stack-label">获取评论数上限</label>
                 <input type="number" class="bseas-settings-input" id="bseas-s-opinion-count" value="${bseas_opinion_comments_count}" min="0" max="100">
+                <div class="bseas-settings-hint">获取的评论数可能会小于但不会超过此限制</div>
             </div>
         </div>
     </section>
@@ -1911,7 +1999,7 @@
             <div class="bseas-settings-row inline">
                 <div class="bseas-settings-row-content">
                     <div class="bseas-settings-row-label">自动打开面板</div>
-                    <div class="bseas-settings-row-desc">开启后自动打开面板。仅在有字幕的视频中生效。</div>
+                    <div class="bseas-settings-row-desc">仅在有字幕的视频中生效。</div>
                 </div>
                 <div class="bseas-settings-row-action">
                     <label class="bseas-toggle">
@@ -1920,34 +2008,33 @@
                     </label>
                 </div>
             </div>
-            <div class="bseas-settings-row inline">
-                <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">自动打开的标签页</div>
-                </div>
-                <div class="bseas-settings-row-action">
-                    <select class="bseas-settings-input" id="bseas-s-auto-tab" ${!bseas_auto_open_panel ? 'disabled' : ''}>${tabOptions}</select>
-                </div>
+            <div class="bseas-settings-row">
+                <label class="bseas-settings-stack-label">自动打开的标签页</label>
+                <select class="bseas-settings-input" id="bseas-s-auto-tab" ${!bseas_auto_open_panel ? 'disabled' : ''}>${tabOptions}</select>
             </div>
             <div class="bseas-settings-row inline">
                 <div class="bseas-settings-row-content">
                     <div class="bseas-settings-row-label">按钮默认位置</div>
+                    <div class="bseas-settings-row-desc">拖动按钮和面板以改变位置</div>
                 </div>
                 <div class="bseas-settings-row-action">
                     <select class="bseas-settings-input" id="bseas-s-pos-preset"><option value="top-left" ${bseas_panel_pos_preset === 'top-left' ? 'selected' : ''}>左上</option><option value="top-right" ${bseas_panel_pos_preset === 'top-right' ? 'selected' : ''}>右上</option><option value="bottom-left" ${bseas_panel_pos_preset === 'bottom-left' ? 'selected' : ''}>左下</option><option value="bottom-right" ${bseas_panel_pos_preset === 'bottom-right' ? 'selected' : ''}>右下</option></select>
                 </div>
             </div>
             <div class="bseas-settings-row">
-                <label class="bseas-settings-stack-label">浏览页加载字幕数量</label>
+                <label class="bseas-settings-stack-label">浏览页加载字幕数量上限</label>
                 <input type="number" class="bseas-settings-input" id="bseas-s-max-preview" value="${bseas_max_preview_subtitles}" min="1">
                 <div class="bseas-settings-hint">为避免页面卡顿，浏览页最多渲染此数量的字幕。</div>
             </div>
         </div>
     </section>
 
-    <div class="bseas-author-info"><div class="bseas-ext-links"><a href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a><a href="${GREASYFORK_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 1024 1024"><path d="M514.56 514.56m-486.4 0a486.4 486.4 0 1 0 972.8 0 486.4 486.4 0 1 0-972.8 0Z"/><path d="M389.376 249.856c102.0416 103.0144 103.9872 105.8816 99.1744 141.5168-3.84 37.5296-3.84 37.5296 172.3392 216.576 97.2288 98.2016 177.152 183.8592 177.152 190.6176 0 26.9312-21.1968 49.1008-45.2608 49.1008-20.224 0-62.5664-36.5568-204.0832-177.152-153.088-152.1152-181.9648-176.1792-196.4032-168.448-31.744 18.2784-57.7536 0.9728-159.7952-101.0688-76.0832-76.0832-98.2016-103.9872-93.3888-117.4528 5.7856-14.4384 19.2512-3.84 82.7904 58.7264L298.9056 418.304l21.1968-21.1968 21.1968-21.1968-75.1104-75.9808c-50.0736-51.0464-71.2192-77.9776-63.5392-82.7904 7.68-4.8128 38.5024 20.224 85.6576 66.4064L361.472 356.7104l22.1184-21.1968 21.1968-22.1184-73.1648-73.1648C268.0832 175.7184 250.7776 144.896 277.7088 144.896c3.84 0 53.9136 47.2064 111.6672 104.96z" fill="#FFFFFF"/></svg>Greasy Fork</a><a href="${SCRIPTCAT_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 1024 1024" width="14" height="14"><path fill="currentColor" d="M501.333333 273.322667c-63.146667 0-69.461333 6.698667-102.144 6.698666C371.968 280.021333 290.218667 213.333333 249.386667 213.333333c-40.874667 0-88.533333 24.021333-88.533334 93.354667v80c0.085333 20.992 7.68 85.333333 37.546667 68.138667-35.285333 41.728-38.826667 90.410667-38.357333 137.514666-9.514667 2.730667-19.2 5.845333-28.629334 9.045334-29.184 9.984-60.16 22.698667-74.112 31.744a32 32 0 0 0 34.730667 53.76c6.656-4.309333 30.762667-14.933333 60.074667-24.96l9.728-3.2c1.962667 18.474667 6.869333 35.413333 14.165333 50.773333l-1.024 0.554667c-17.493333 9.216-33.706667 19.84-44.032 26.581333l-4.821333 3.157333a32 32 0 1 0 34.730666 53.76l5.589334-3.669333c10.453333-6.826667 23.850667-15.573333 38.442666-23.253333 3.413333-1.834667 6.698667-3.456 9.856-4.949334C288.554667 830.933333 421.12 853.333333 501.333333 853.333333s212.778667-22.4 286.592-91.648c3.157333 1.493333 6.4 3.114667 9.856 4.949334 14.592 7.68 27.989333 16.426667 38.442667 23.253333l5.589333 3.669333a32 32 0 0 0 34.730667-53.76l-4.821333-3.157333a555.008 555.008 0 0 0-44.032-26.581333l-1.024-0.554667c7.296-15.36 12.202667-32.298667 14.165333-50.773333l9.728 3.2c29.312 10.026667 53.418667 20.650667 60.117333 24.96a32 32 0 0 0 34.688-53.76c-13.952-9.045333-44.928-21.76-74.069333-31.744-9.429333-3.2-19.157333-6.314667-28.672-9.088 0.512-47.104-3.072-95.744-38.4-137.472 29.866667 17.194667 37.546667-47.146667 37.589333-68.181334V306.688C841.813333 237.354667 794.154667 213.333333 753.28 213.333333c-40.832 0-122.581333 66.688-149.76 66.688-32.725333 0-39.04-6.698667-102.186667-6.698666z"/></svg>脚本猫</a></div><p class="bseas-author-text">作者: <a href="https://github.com/LiuMashiro" target="_blank" class="bseas-author-link">LiuMashiro</a></p><p class="bseas-author-text" style="margin-top:12px;font-size:12px;">当前版本: v${SCRIPT_VERSION}${updateBadgeHtml}</p></div>
-            <div style="text-align:center; margin-top:2px;">
+    <div class="bseas-author-info"><div class="bseas-ext-links"><a href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a><a href="${GREASYFORK_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 1024 1024"><path d="M514.56 514.56m-486.4 0a486.4 486.4 0 1 0 972.8 0 486.4 486.4 0 1 0-972.8 0Z"/><path d="M389.376 249.856c102.0416 103.0144 103.9872 105.8816 99.1744 141.5168-3.84 37.5296-3.84 37.5296 172.3392 216.576 97.2288 98.2016 177.152 183.8592 177.152 190.6176 0 26.9312-21.1968 49.1008-45.2608 49.1008-20.224 0-62.5664-36.5568-204.0832-177.152-153.088-152.1152-181.9648-176.1792-196.4032-168.448-31.744 18.2784-57.7536 0.9728-159.7952-101.0688-76.0832-76.0832-98.2016-103.9872-93.3888-117.4528 5.7856-14.4384 19.2512-3.84 82.7904 58.7264L298.9056 418.304l21.1968-21.1968 21.1968-21.1968-75.1104-75.9808c-50.0736-51.0464-71.2192-77.9776-63.5392-82.7904 7.68-4.8128 38.5024 20.224 85.6576 66.4064L361.472 356.7104l22.1184-21.1968 21.1968-22.1184-73.1648-73.1648C268.0832 175.7184 250.7776 144.896 277.7088 144.896c3.84 0 53.9136 47.2064 111.6672 104.96z" fill="#FFFFFF"/></svg>Greasy Fork</a><a href="${SCRIPTCAT_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 1024 1024" width="14" height="14"><path fill="currentColor" d="M501.333333 273.322667c-63.146667 0-69.461333 6.698667-102.144 6.698666C371.968 280.021333 290.218667 213.333333 249.386667 213.333333c-40.874667 0-88.533333 24.021333-88.533334 93.354667v80c0.085333 20.992 7.68 85.333333 37.546667 68.138667-35.285333 41.728-38.826667 90.410667-38.357333 137.514666-9.514667 2.730667-19.2 5.845333-28.629334 9.045334-29.184 9.984-60.16 22.698667-74.112 31.744a32 32 0 0 0 34.730667 53.76c6.656-4.309333 30.762667-14.933333 60.074667-24.96l9.728-3.2c1.962667 18.474667 6.869333 35.413333 14.165333 50.773333l-1.024 0.554667c-17.493333 9.216-33.706667 19.84-44.032 26.581333l-4.821333 3.157333a32 32 0 1 0 34.730666 53.76l5.589334-3.669333c10.453333-6.826667 23.850667-15.573333 38.442666-23.253333 3.413333-1.834667 6.698667-3.456 9.856-4.949334C288.554667 830.933333 421.12 853.333333 501.333333 853.333333s212.778667-22.4 286.592-91.648c3.157333 1.493333 6.4 3.114667 9.856 4.949334 14.592 7.68 27.989333 16.426667 38.442667 23.253333l5.589333 3.669333a32 32 0 0 0 34.730667-53.76l-4.821333-3.157333a555.008 555.008 0 0 0-44.032-26.581333l-1.024-0.554667c7.296-15.36 12.202667-32.298667 14.165333-50.773333l9.728 3.2c29.312 10.026667 53.418667 20.650667 60.117333 24.96a32 32 0 0 0 34.688-53.76c-13.952-9.045333-44.928-21.76-74.069333-31.744-9.429333-3.2-19.157333-6.314667-28.672-9.088 0.512-47.104-3.072-95.744-38.4-137.472 29.866667 17.194667 37.546667-47.146667 37.589333-68.181334V306.688C841.813333 237.354667 794.154667 213.333333 753.28 213.333333c-40.832 0-122.581333 66.688-149.76 66.688-32.725333 0-39.04-6.698667-102.186667-6.698666z"/></svg>脚本猫</a></div><p class="bseas-author-text">作者: <a href="https://github.com/LiuMashiro" target="_blank" class="bseas-author-link">LiuMashiro</a> · 当前版本: v${SCRIPT_VERSION}${updateBadgeHtml}</p></div>
+            <div style="display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:6px; margin-top:2px;">
+                <span id="bseas-storage-usage" style="font-size:12px; color:var(--bseas-text-muted);"></span>
+                <span style="color: var(--bseas-text-muted);">|</span>
                 <a href="javascript:void(0);" class="bseas-danger-link" id="bseas-clear-cache">清除所有储存</a>
-                <span style="color: var(--bseas-text-muted); margin: 0 4px;">|</span>
+                <span style="color: var(--bseas-text-muted);">|</span>
                 <a href="javascript:void(0);" class="bseas-danger-link" id="bseas-factory-reset">清除所有储存并恢复出厂设置</a>
             </div>
             <div style="text-align:center; margin-top:8px;">
@@ -2037,6 +2124,7 @@
             if (box.style.display === 'none') { box.style.display = 'block'; btn.textContent = '收起提示'; }
             else { box.style.display = 'none'; btn.textContent = '查看使用提示'; }
         });
+        updateStorageUsageDisplay();
         document.getElementById('bseas-clear-cache')?.addEventListener('click', () => {
             if (!confirm('确认清除所有AI分析储存？这将删除您已生成的所有AI分析。此操作不可恢复！')) return;
             try {
@@ -2062,7 +2150,7 @@
         aiSummaryCache = loadCache();
         createUI();
         setTimeout(() => { fetchAllSubtitles(); initAdSkipMonitor(); }, AUTO_FETCH_DELAY_MS);
-        setTimeout(() => { checkForUpdates(); }, 5000);
+        setTimeout(() => { checkForUpdates(); checkStorageSize(); }, 5000);
     }
     function resetState() {
         if (autoGenerateTimer) { clearTimeout(autoGenerateTimer); autoGenerateTimer = null; }
