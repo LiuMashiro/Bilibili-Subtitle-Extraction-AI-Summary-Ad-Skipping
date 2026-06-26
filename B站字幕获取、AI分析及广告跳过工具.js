@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      1.7.0
-// @description  自动提取B站视频字幕，支持AI生成的CC字幕，通过AI总结+广告识别，自动跳过广告。支持热门评论舆论分析、LaTeX渲染、多语言字幕、面板拖拽、关键词搜索。
+// @version      2.0.0
+// @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
 // @match        *://www.bilibili.com/video/*
@@ -40,7 +40,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '1.7.0';
+    const SCRIPT_VERSION = '2.0.0';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -61,6 +61,7 @@
     };
     const TAB_OPTIONS = { preview: '浏览', ai: 'AI分析', text: '文本' };
     const DETAIL_LEVELS = { very_detailed: '非常详细', detailed: '详细', concise: '简洁', minimal: '极简' };
+    const TAB_ORDER = ['preview', 'ai', 'text', 'settings'];
 
     // ===================== 2. 设置迁移与读取 =====================
     function migrateOldSettings() {
@@ -101,10 +102,10 @@
     let bseas_opinion_comments_count = GM_getValue('bseas_opinion_comments_count', 30);
     let bseas_detail_level = GM_getValue('bseas_detail_level', 'concise');
     let bseas_auto_skip_ad = GM_getValue('bseas_auto_skip_ad', true);
-    let bseas_latex = GM_getValue('bseas_latex', true);
+    const bseas_latex = true;
     let bseas_disable_api = GM_getValue('bseas_disable_api', false);
     let bseas_panel_pos_preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
-    let bseas_max_preview_subtitles = GM_getValue('bseas_max_preview_subtitles', 1000);
+    let bseas_max_preview_subtitles = GM_getValue('bseas_max_preview_subtitles', 200);
     let bseas_confirm_chars = GM_getValue('bseas_confirm_chars', 20000);
     let bseas_confirm_enabled = GM_getValue('bseas_confirm_enabled', true);
 
@@ -248,31 +249,79 @@
             --bseas-warning: #ffc107; --bseas-warning-bg: #fff3cd; --bseas-warning-border: #ffeeba; --bseas-warning-text: #856404;
             --bseas-ad-bg: #fffbeb; --bseas-ad-border: #fbbf24; --bseas-ad-text: #92400e;
             --bseas-ad-button: #f59e0b; --bseas-ad-button-hover: #FF8C00;
+            --bseas-danger: #ff3b30;
+            --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+            --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+            --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
         }
         * { font-family: -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif !important; }
         .bseas-container { position:fixed; z-index:100000; }
-        .bseas-trigger-btn { width:52px; height:52px; border-radius:16px; background:var(--bseas-primary); border:none; cursor:grab; box-shadow:0 8px 24px rgba(0,174,236,0.3); display:flex; align-items:center; justify-content:center; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); position:relative; }
+        .bseas-trigger-btn {
+            width: 60px; height: 60px;
+            border-radius: 20px;
+            background: rgba(255,255,255,0.62);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid rgba(255,255,255,0.7);
+            cursor: grab;
+            box-shadow:
+                0 8px 24px rgba(0,0,0,0.12),
+                0 16px 40px rgba(0,0,0,0.08),
+                0 4px 10px rgba(0,0,0,0.05),
+                inset 0 1px 0 rgba(255,255,255,0.9),
+                inset 0 -1px 0 rgba(0,0,0,0.04);
+            display:flex; align-items:center; justify-content:center;
+            transition: transform 0.45s var(--ease-spring), box-shadow 0.35s var(--ease-out), background 0.3s;
+            position: relative;
+        }
         .bseas-trigger-btn:active { cursor:grabbing; }
-        .bseas-trigger-btn:hover { transform:translateY(-2px) scale(1.04); box-shadow:0 12px 32px rgba(0,174,236,0.4); }
-        .bseas-trigger-btn svg { width:24px; height:24px; fill:white; transition:transform 0.3s ease; pointer-events:none; }
-        .bseas-trigger-btn:hover svg { transform:scale(1.1); }
-        .bseas-status-dot { position:absolute; top:-2px; right:-2px; width:12px; height:12px; border-radius:50%; border:2px solid white; transition:background 0.3s,transform 0.3s; display:none; pointer-events:none; }
-        .bseas-status-dot.state-yellow { display:block; background:#f59e0b; transform:scale(1.1); }
-        .bseas-status-dot.state-green { display:block; background:#10b981; transform:scale(1.1); }
+        .bseas-trigger-btn:hover {
+            transform: translateY(-3px) scale(1.06);
+            background: rgba(255,255,255,0.72);
+            box-shadow:
+                0 22px 52px rgba(0,0,0,0.18),
+                0 6px 14px rgba(0,0,0,0.07),
+                inset 0 1px 0 rgba(255,255,255,0.95);
+        }
+        .bseas-trigger-btn:active { transform: scale(0.94); }
+        .bseas-trigger-btn svg { width:26px; height:26px; fill: var(--bseas-primary); transition: transform 0.55s var(--ease-spring); pointer-events:none; filter: drop-shadow(0 1px 2px rgba(0,174,236,0.25)); }
+        .bseas-trigger-btn:hover svg { transform: scale(1.15); }
+        .bseas-trigger-btn::after {
+            content:''; position:absolute; inset:-2px; border-radius:22px;
+            background: radial-gradient(circle at 30% 20%, rgba(0,174,236,0.18), transparent 60%);
+            opacity:0; transition: opacity 0.4s var(--ease-out); pointer-events:none; z-index:-1;
+        }
+        .bseas-trigger-btn:hover::after { opacity:1; }
+        .bseas-status-dot {
+            position:absolute; top:-1px; right:-1px; width:11px; height:11px;
+            border-radius:50%; border:2px solid #fff;
+            transition: background 0.4s var(--ease-out), transform 0.4s var(--ease-spring), opacity 0.3s;
+            display:none; pointer-events:none;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+        }
+        .bseas-status-dot.state-yellow { display:block; background:#ff9500; transform:scale(1); animation: bseas-pulse 2.4s ease-in-out infinite; }
+        .bseas-status-dot.state-green { display:block; background:#34c759; transform:scale(1); }
+        @keyframes bseas-pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(255,149,0,0.45); }
+            50% { box-shadow: 0 0 0 5px rgba(255,149,0,0); }
+        }
         @keyframes bseas-spin { to{transform:rotate(360deg)} }
-        @keyframes bseas-fadein { from{opacity:0;transform:translateY(-10px) scale(0.98)}to{opacity:1;transform:none} }
-        @keyframes bseas-fadeout { from{opacity:1;transform:none}to{opacity:0;transform:translateY(-10px) scale(0.98)} }
         @keyframes bseas-slideup { from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:none} }
         @keyframes bseas-shake { 0%,100%{transform:translateX(0)}10%,30%,50%,70%,90%{transform:translateX(-2px)}20%,40%,60%,80%{transform:translateX(2px)} }
-        .bseas-panel { position:absolute; width:430px; max-height:min(calc(100vh - 120px),66vh); background:var(--bseas-bg-glass); backdrop-filter:blur(24px); border-radius:var(--bseas-radius-lg); box-shadow:var(--bseas-shadow); border:1px solid rgba(255,255,255,0.4); display:none; flex-direction:column; overflow:hidden; animation:bseas-fadein 0.25s cubic-bezier(0.16,1,0.3,1); }
+        @keyframes bseas-panel-in { 0%{opacity:0;transform:translateY(-12px) scale(0.94)}60%{transform:translateY(2px) scale(1.01)}100%{opacity:1;transform:translateY(0) scale(1)} }
+        @keyframes bseas-panel-out { 0%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0;transform:translateY(-10px) scale(0.95)} }
+        @keyframes bseas-tab-in-right { from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none} }
+        @keyframes bseas-tab-in-left { from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none} }
+        .bseas-panel { position:absolute; width:430px; height:min(calc(100vh - 120px),66vh); background:var(--bseas-bg-glass); backdrop-filter:blur(24px); border-radius:var(--bseas-radius-lg); box-shadow:var(--bseas-shadow); border:1px solid rgba(255,255,255,0.4); display:none; flex-direction:column; overflow:hidden; left:0; animation:bseas-panel-in 0.28s var(--ease-spring); transition:margin-left 0.45s var(--ease-spring), top 0.4s var(--ease-spring), bottom 0.4s var(--ease-spring); }
         .bseas-panel.show { display:flex; }
-        .bseas-panel.hiding { animation:bseas-fadeout 0.2s ease forwards; }
-        .bseas-header { padding:18px 22px 14px; border-bottom:1px solid var(--bseas-border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+        .bseas-panel.hiding { animation:bseas-panel-out 0.22s var(--ease-standard) forwards; }
+        .bseas-panel.no-transition { transition:none !important; }
+        .bseas-header { padding:10px 22px 6px; border-bottom:1px solid var(--bseas-border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
         .bseas-header-text { cursor:move; flex:1; min-width:0; }
         .bseas-title { font-size:16px; font-weight:700; color:var(--bseas-text); margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
         .bseas-platform-tag { display:inline-block; padding:3px 8px; background:rgba(0,174,236,0.1); color:var(--bseas-primary); font-size:11px; font-weight:700; border-radius:6px; }
-        .bseas-subtitle-info { font-size:13px; color:var(--bseas-text-dim); margin-top:4px; font-weight:500; transition:color 0.3s; }
-        .bseas-ad-hint { font-size:12px; color:var(--bseas-warning-text); margin-top:2px; font-weight:500; display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+        .bseas-subtitle-info { font-size:13px; color:var(--bseas-text-dim); margin-top:2px; font-weight:500; transition:color 0.3s; }
+        .bseas-ad-hint { font-size:12px; color:var(--bseas-text-muted); margin-top:1px; font-weight:400; display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
         .bseas-header-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
         .bseas-icon-btn { width:34px; height:34px; border-radius:var(--bseas-radius-sm); background:var(--bseas-bg-card); border:1px solid var(--bseas-border); cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--bseas-text-dim); transition:all 0.2s; text-decoration:none; }
         .bseas-icon-btn:hover { background:#e2e8f0; color:var(--bseas-text); transform:scale(1.05); }
@@ -286,14 +335,15 @@
         .bseas-ext-link { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:8px; text-decoration:none; font-size:12px; font-weight:500; transition:all 0.2s; color:var(--bseas-text-dim); background:var(--bseas-bg-card); border:1px solid var(--bseas-border); }
         .bseas-ext-link:hover { color:var(--bseas-text); border-color:#cbd5e1; transform:translateY(-1px); box-shadow:0 2px 6px rgba(0,0,0,0.06); text-decoration:none; }
         .bseas-ext-link svg { width:14px; height:14px; fill:currentColor; flex-shrink:0; }
-        .bseas-api-warning { background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-md); padding:12px 16px; margin:16px 22px 0; display:flex; align-items:center; gap:10px; animation:bseas-shake 0.5s ease; }
+        .bseas-api-warning { background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-md); padding:10px 16px; margin:8px 22px 0; display:flex; align-items:center; gap:10px; animation:bseas-shake 0.5s ease; }
         .bseas-api-warning-icon { font-size:18px; }
         .bseas-api-warning-text { flex:1; font-size:13px; color:var(--bseas-warning-text); font-weight:600; }
         .bseas-api-warning-btn { background:var(--bseas-warning); color:white; border:none; border-radius:var(--bseas-radius-sm); padding:6px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s; }
         .bseas-api-warning-btn:hover { background:#e0a800; transform:translateY(-1px); }
         .bseas-api-warning-btn:active { transform:translateY(0); }
         .bseas-source-section { border-bottom:1px solid var(--bseas-border); flex-shrink:0; }
-        .bseas-source-header { display:flex; align-items:center; justify-content:space-between; padding:12px 22px; cursor:pointer; user-select:none; transition:background 0.2s; }
+        .bseas-sticky-top { position:sticky; top:0; z-index:20; flex-shrink:0; margin:0 -22px; background:rgba(255,255,255,0.6); backdrop-filter:blur(24px) saturate(180%); -webkit-backdrop-filter:blur(24px) saturate(180%); border-bottom:1px solid var(--bseas-border); }
+        .bseas-source-header { display:flex; align-items:center; justify-content:space-between; padding:7px 22px; cursor:pointer; user-select:none; transition:background 0.2s; }
         .bseas-source-header:hover { background:rgba(0,0,0,0.02); }
         .bseas-source-label { font-size:13px; font-weight:600; color:var(--bseas-text-dim); }
         .bseas-source-arrow { width:20px; height:20px; display:flex; align-items:center; justify-content:center; transition:transform 0.3s cubic-bezier(0.4,0,0.2,1); color:var(--bseas-text-dim); }
@@ -312,7 +362,7 @@
         .bseas-subtitle-option:not(.active) .bseas-tag.ai { background:rgba(0,174,236,0.1); color:var(--bseas-primary); }
         .bseas-subtitle-option:not(.active) .bseas-tag.cc { background:rgba(16,185,129,0.1); color:#10b981; }
         .bseas-subtitle-option.active .bseas-tag { background:rgba(255,255,255,0.2); color:white; }
-        .bseas-tabs { display:flex; padding:5px; background:var(--bseas-bg-card); border-radius:var(--bseas-radius-md); margin:16px 22px 4px; gap:4px; flex-shrink:0; }
+        .bseas-tabs { display:flex; margin:11px 22px 11px; gap:4px; flex-shrink:0; }
         .bseas-tabs.hidden { display:none; }
         .bseas-tab { flex:1; padding:8px 0; border:none; background:transparent; color:var(--bseas-text-dim); font-size:13.5px; font-weight:600; cursor:pointer; border-radius:var(--bseas-radius-sm); transition:all 0.25s cubic-bezier(0.4,0,0.2,1); text-align:center; position:relative; overflow:hidden; }
         .bseas-tab::before { content:''; position:absolute; bottom:0; left:50%; width:0; height:2px; background:var(--bseas-primary); transition:all 0.3s ease; transform:translateX(-50%); }
@@ -320,17 +370,22 @@
         .bseas-tab:hover:not(.active)::before { width:60%; }
         .bseas-tab.active { background:white; color:var(--bseas-primary); box-shadow:0 2px 8px rgba(0,0,0,0.06); transform:translateY(-1px); }
         .bseas-tab.active::before { width:80%; }
-        .bseas-content { flex:1; min-height:0; overflow-y:auto; padding:14px 22px 20px; }
+        .bseas-content { flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable; padding:0 22px 0; overscroll-behavior:contain; -webkit-overscroll-behavior:contain; display:flex; flex-direction:column; position:relative; z-index:0; }
+        .bseas-tab-body.anim-right { animation:bseas-tab-in-right 0.3s var(--ease-out); }
+        .bseas-tab-body.anim-left { animation:bseas-tab-in-left 0.3s var(--ease-out); }
         .bseas-content::-webkit-scrollbar { width:6px; }
         .bseas-content::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:4px; transition:background 0.2s; }
         .bseas-content::-webkit-scrollbar-thumb:hover { background:#94a3b8; }
+        .bseas-tab-body { flex:1; min-height:0; display:flex; flex-direction:column; padding-top:14px; }
+        .bseas-tab-body::after { content:""; display:block; flex-shrink:0; height:var(--bseas-footer-h, 96px); }
         .bseas-checkbox-label { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:500; color:var(--bseas-text); cursor:pointer; user-select:none; transition:color 0.2s; }
         .bseas-checkbox-label:hover { color:var(--bseas-primary); }
-        .bseas-checkbox-label input[type="checkbox"] { width:16px; height:16px; accent-color:#7dd3fc; cursor:pointer; margin:0; flex-shrink:0; transition:transform 0.2s; }
-        .bseas-checkbox-label input[type="checkbox"]:hover { transform:scale(1.1); }
+        .bseas-checkbox-label input[type="checkbox"] { appearance:none; -webkit-appearance:none; width:20px; height:20px; border:1.5px solid #cbd5e1; border-radius:6px; cursor:pointer; margin:0; flex-shrink:0; transition:border-color 0.2s var(--ease-out), background-color 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out); position:relative; background:#fff; outline:none; }
+        .bseas-checkbox-label input[type="checkbox"]:hover { border-color:var(--bseas-primary); box-shadow:0 0 0 3px rgba(0,174,236,0.12); }
+        .bseas-checkbox-label input[type="checkbox"]:checked { background:var(--bseas-primary); border-color:var(--bseas-primary); background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:center; background-size:13px 13px; }
         .bseas-text-controls { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; padding:10px 14px; background:white; border-radius:var(--bseas-radius-sm); border:1px solid var(--bseas-border); transition:box-shadow 0.2s; }
         .bseas-text-controls:hover { box-shadow:0 2px 8px rgba(0,0,0,0.04); }
-        .bseas-text-area { width:100%; min-height:280px; background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:16px; color:var(--bseas-text); font-size:14px; line-height:1.7; resize:vertical; box-sizing:border-box; transition:all 0.2s; }
+        .bseas-text-area { width:100%; flex:1; min-height:200px; background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:16px; color:var(--bseas-text); font-size:14px; line-height:1.7; resize:none; box-sizing:border-box; transition:all 0.2s; }
         .bseas-text-area:focus { outline:none; border-color:var(--bseas-primary); box-shadow:0 0 0 3px rgba(0,174,236,0.1); transform:translateY(-1px); }
         .bseas-loading, .bseas-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; color:var(--bseas-text-dim); font-size:15px; font-weight:500; gap:16px; animation:bseas-slideup 0.3s ease; }
         .bseas-spinner { width:32px; height:32px; border:3px solid rgba(0,174,236,0.15); border-top-color:var(--bseas-primary); border-radius:50%; animation:bseas-spin 0.8s linear infinite; }
@@ -352,18 +407,18 @@
         .bseas-ts { font-size:12px; color:var(--bseas-primary); font-family:monospace; font-weight:700; background:rgba(0,174,236,0.06); align-self:flex-start; padding:2px 6px; border-radius:4px; transition:all 0.2s; }
         .bseas-subtitle-item:hover .bseas-ts { background:var(--bseas-primary); color:white; }
         .bseas-st { font-size:14.5px; color:var(--bseas-text); line-height:1.6; }
-        .bseas-st mark { background:rgba(255,235,59,0.4); color:inherit; border-radius:3px; padding:0 2px; }
+        .bseas-st mark { background:rgba(255,235,59,0.5); color:inherit; border-radius:2px; padding:0; margin:0; }
         .bseas-ai-big-btn { width:100%; padding:14px; background:var(--bseas-primary); color:white; border:none; border-radius:var(--bseas-radius-md); font-size:15px; font-weight:600; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 4px 16px rgba(0,174,236,0.25); position:relative; overflow:hidden; }
         .bseas-ai-big-btn::before { content:''; position:absolute; top:0; left:-100%; width:100%; height:100%; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent); transition:left 0.5s ease; }
         .bseas-ai-big-btn:hover:not(:disabled) { background:var(--bseas-primary-hover); transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,174,236,0.35); }
         .bseas-ai-big-btn:hover:not(:disabled)::before { left:100%; }
         .bseas-ai-big-btn:active:not(:disabled) { transform:translateY(0); }
         .bseas-ai-big-btn:disabled { opacity:0.5; cursor:not-allowed; }
-        .bseas-retry-btn { position:absolute; top:16px; right:16px; width:32px; height:32px; background:#f1f5f9; border:none; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--bseas-text-dim); z-index:10; transition:background 0.2s,color 0.2s; animation:bseas-slideup 0.3s ease; }
+        .bseas-retry-btn { position:absolute; top:16px; right:16px; width:32px; height:32px; background:#f1f5f9; border:none; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; color:var(--bseas-text-dim); z-index:10; transition:background 0.2s,color 0.2s; }
         .bseas-retry-btn:hover { background:var(--bseas-primary); color:white; }
         .bseas-retry-btn svg { width:16px; height:16px; fill:currentColor; transition:transform 0.4s ease; }
         .bseas-retry-btn:hover svg { transform:rotate(180deg) scale(1.1); }
-        .bseas-ai-result { background:white; border-radius:var(--bseas-radius-md); padding:24px; margin-bottom:16px; border:1px solid var(--bseas-border); color:var(--bseas-text); line-height:1.8; font-size:15px; transition:box-shadow 0.2s; animation:bseas-slideup 0.3s ease; }
+        .bseas-ai-result { background:white; border-radius:var(--bseas-radius-md); padding:24px; margin-bottom:16px; border:1px solid var(--bseas-border); color:var(--bseas-text); line-height:1.8; font-size:15px; transition:box-shadow 0.2s; }
         .bseas-ai-result:hover { box-shadow:0 4px 12px rgba(0,0,0,0.04); }
         .bseas-markdown h1 { font-size:20px; font-weight:800; margin:24px 0 12px; padding-bottom:10px; border-bottom:1px solid var(--bseas-border); }
         .bseas-markdown h2 { font-size:18px; font-weight:700; margin:20px 0 10px; }
@@ -377,7 +432,7 @@
         .bseas-markdown code { background:#f1f5f9; color:var(--bseas-primary); padding:2px 6px; border-radius:4px; font-size:13.5px; }
         .bseas-markdown blockquote { border-left:4px solid var(--bseas-primary); margin:14px 0; padding:10px 16px; background:#f0f9ff; border-radius:0 var(--bseas-radius-sm) var(--bseas-radius-sm) 0; color:var(--bseas-text-dim); }
         .bseas-markdown hr { border:none; height:1px; background:var(--bseas-border); margin:20px 0; }
-        .bseas-sp-box { border-radius:24px; padding:16px 20px; margin-bottom:16px; display:flex; flex-direction:column; gap:10px; animation:bseas-slideup 0.3s ease; }
+        .bseas-sp-box { border-radius:24px; padding:16px 20px; margin-bottom:16px; display:flex; flex-direction:column; gap:10px; }
         .bseas-sp-box.status-found { background:var(--bseas-ad-bg); border:2px solid var(--bseas-ad-border); box-shadow:0 4px 16px rgba(251,191,36,0.15); }
         .bseas-sp-box.status-none { background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%); border:1px solid #22c55e; box-shadow:0 4px 12px rgba(34,197,94,0.1); }
         .bseas-sp-box.status-err { background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%); border:1px solid #ef4444; box-shadow:0 4px 12px rgba(239,68,68,0.1); }
@@ -397,7 +452,7 @@
         .bseas-sp-skip:hover { background:var(--bseas-ad-button-hover); transform:translateY(-2px) scale(1.02); box-shadow:0 4px 12px rgba(245,158,11,0.4); }
         .bseas-sp-skip:active { transform:translateY(0) scale(0.98); }
         .bseas-sp-hint { font-size:12px; color:#b45309; margin-left:34px; }
-        .bseas-followup-section { margin-top:4px; background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:16px; transition:box-shadow 0.2s; animation:bseas-slideup 0.3s ease; }
+        .bseas-followup-section { margin-top:4px; background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:16px; transition:box-shadow 0.2s; }
         .bseas-followup-section:hover { box-shadow:0 4px 12px rgba(0,0,0,0.04); }
         .bseas-followup-label { font-size:13px; font-weight:700; color:var(--bseas-primary); margin-bottom:10px; display:flex; align-items:center; gap:6px; }
         .bseas-followup-input { width:100%; background:#f8fafc; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-sm); padding:12px 14px; color:var(--bseas-text); font-size:14px; margin-bottom:12px; resize:none; height:72px; box-sizing:border-box; transition:all 0.2s; }
@@ -405,61 +460,89 @@
         .bseas-followup-btn { width:100%; padding:12px; background:var(--bseas-primary); color:white; border:none; border-radius:var(--bseas-radius-sm); font-size:14px; font-weight:600; cursor:pointer; transition:all 0.2s; }
         .bseas-followup-btn:hover:not(:disabled) { background:var(--bseas-primary-hover); transform:translateY(-1px); }
         .bseas-followup-btn:disabled { opacity:0.5; cursor:not-allowed; }
-        .bseas-qa-item { margin-top:16px; padding-top:16px; border-top:1px solid var(--bseas-border); animation:bseas-slideup 0.3s ease; }
+        .bseas-qa-item { margin-top:16px; padding-top:16px; border-top:1px solid var(--bseas-border); }
         .bseas-qa-q { font-size:14px; font-weight:700; color:var(--bseas-text); margin-bottom:10px; background:#f1f5f9; padding:10px 14px; border-radius:var(--bseas-radius-sm); transition:background 0.2s; }
         .bseas-qa-q:hover { background:#e2e8f0; }
         .bseas-qa-a { font-size:14.5px; color:var(--bseas-text); line-height:1.7; padding:0 4px; }
         .bseas-noapi-box { background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-md); padding:16px; margin-bottom:16px; }
         .bseas-noapi-title { font-size:14px; font-weight:700; color:var(--bseas-warning-text); margin-bottom:8px; display:flex; align-items:center; gap:6px; }
         .bseas-noapi-desc { font-size:13px; color:var(--bseas-warning-text); line-height:1.6; margin-bottom:12px; }
-        .bseas-settings-group { margin-bottom:8px; }
-        .bseas-settings-group + .bseas-settings-group { margin-top:48px; padding-top:34px; border-top:1px solid var(--bseas-border); }
-        .bseas-settings-group-title { font-size:15px; font-weight:800; color:var(--bseas-text); margin-bottom:16px; display:flex; align-items:center; gap:8px; }
-        .bseas-settings-group-title-dot {
-            width: 4px;
-            height: 16px;
-            border-radius: 2px;
-            background: var(--bseas-primary);
-            flex-shrink: 0;
+        /* ===== Settings page (iOS Settings grouped style) ===== */
+        .bseas-settings { padding:8px 0 4px; }
+        .bseas-settings-section { margin-bottom:28px; }
+        .bseas-settings-section:last-child { margin-bottom:8px; }
+        .bseas-settings-section-title { font-size:13px; font-weight:600; color: var(--bseas-text-dim); text-transform: uppercase; letter-spacing: 0.4px; margin: 0 4px 8px 4px; padding-left: 4px; }
+        .bseas-settings-card { background: rgba(255,255,255,0.85); border: 1px solid var(--bseas-border); border-radius: var(--bseas-radius-md); overflow: hidden; }
+        .bseas-settings-row { padding: 12px 14px; border-bottom: 0.5px solid var(--bseas-border); transition: background 0.2s; }
+        .bseas-settings-row:last-child { border-bottom: none; }
+        .bseas-settings-row:hover { background: rgba(120,120,128,0.04); }
+        .bseas-settings-row.inline { display: flex; align-items: center; gap: 12px; }
+        .bseas-settings-row:has(.bseas-settings-row-action:has(.bseas-toggle)) { display: flex; align-items: center; gap: 12px; }
+        .bseas-settings-row-content { flex: 1; min-width: 0; }
+        .bseas-settings-row-label { font-size:13.5px; font-weight:500; color: var(--bseas-text); margin-bottom:3px; letter-spacing:-0.1px; }
+        .bseas-settings-row-desc { font-size:12px; color: var(--bseas-text-muted); line-height:1.45; }
+        .bseas-settings-row-action { flex-shrink: 0; }
+        .bseas-settings-row-action select,
+        .bseas-settings-row-action input { min-width: 120px; max-width: 160px; }
+        .bseas-settings-stack-label { display:block; font-size:12.5px; font-weight:500; color: var(--bseas-text-dim); margin-bottom:6px; letter-spacing:0.1px; }
+        .bseas-settings-hint { font-size:11.5px; color: var(--bseas-text-muted); margin-top:6px; line-height:1.45; }
+        .bseas-settings-input {
+            width:100%; padding:10px 12px;
+            background: rgba(120,120,128,0.06);
+            border: 1px solid var(--bseas-border); border-radius: var(--bseas-radius-sm);
+            font-size:13.5px; color: var(--bseas-text);
+            box-sizing: border-box; transition: border-color 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out), background-color 0.2s var(--ease-out);
         }
-        .bseas-settings-subgroup { margin-bottom:22px; }
-        .bseas-settings-subgroup:last-child { margin-bottom:0; }
-        .bseas-settings-subgroup-title { font-size:13.5px; font-weight:700; color:var(--bseas-text); margin-bottom:14px; letter-spacing:0.2px; }
-        .bseas-settings-subgroup + .bseas-settings-subgroup { padding-top:18px; border-top:1px solid var(--bseas-border); }
-        .bseas-settings-block { margin-bottom:16px; }
-        .bseas-settings-block:last-child { margin-bottom:0; }
-        .bseas-settings-block-label { display:block; font-size:13px; font-weight:600; color:var(--bseas-text-dim); margin-bottom:8px; }
-        .bseas-settings-input { width:100%; padding:12px 14px; background:#f8fafc; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-sm); font-size:14px; color:var(--bseas-text); box-sizing:border-box; transition:all 0.2s; }
-        .bseas-settings-input:focus { outline:none; border-color:var(--bseas-primary); background:white; box-shadow:0 0 0 3px rgba(0,174,236,0.1); transform:translateY(-1px); }
-        .bseas-settings-check-row { display:flex; align-items:flex-start; gap:10px; cursor:pointer; user-select:none; transition:opacity 0.2s; }
-        .bseas-settings-check-row:hover { opacity:0.9; }
-        .bseas-settings-check-row input[type="checkbox"] { width:16px; height:16px; margin-top:3px; accent-color:#7dd3fc; cursor:pointer; flex-shrink:0; transition:transform 0.2s; }
-        .bseas-settings-check-row input[type="checkbox"]:hover { transform:scale(1.1); }
-        .bseas-settings-check-text { display:flex; flex-direction:column; gap:4px; }
-        .bseas-settings-check-title { font-size:14px; font-weight:500; color:var(--bseas-text); line-height:1.4; }
-        .bseas-settings-check-desc { font-size:12px; color:var(--bseas-text-muted); line-height:1.5; }
+        .bseas-settings-input:focus { outline: none; border-color: var(--bseas-primary); background: white; box-shadow: 0 0 0 3px rgba(0,174,236,0.12); }
+        input[type=number].bseas-settings-input::-webkit-inner-spin-button,
+        input[type=number].bseas-settings-input::-webkit-outer-spin-button { opacity:0; }
+        input[type=number].bseas-settings-input:focus::-webkit-inner-spin-button,
+        input[type=number].bseas-settings-input:focus::-webkit-outer-spin-button { opacity:1; }
+        select.bseas-settings-input { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='%238e8e93'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 30px; cursor: pointer; }
+        .bseas-settings-link-row { display:flex; align-items:center; justify-content:space-between; padding: 10px 14px; }
+        .bseas-settings-link-row a { font-size:12px; color: var(--bseas-primary); text-decoration: none; font-weight:500; }
+        .bseas-settings-link-row a:hover { text-decoration: underline; }
+
+        /* iOS-style toggle switch */
+        .bseas-toggle { position: relative; display: inline-block; width: 44px; height: 28px; flex-shrink: 0; vertical-align: middle; }
+        .bseas-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+        .bseas-toggle-slider { position: absolute; inset: 0; background: rgba(120,120,128,0.22); border-radius: 999px; cursor: pointer; transition: background 0.35s var(--ease-out); }
+        .bseas-toggle-slider::before { content: ''; position: absolute; width: 24px; height: 24px; left: 2px; top: 2px; background: white; border-radius: 50%; box-shadow: 0 3px 6px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(0,0,0,0.04); transition: transform 0.45s var(--ease-spring), width 0.2s var(--ease-out); }
+        .bseas-toggle:hover .bseas-toggle-slider::before { width: 26px; }
+        .bseas-toggle input:checked + .bseas-toggle-slider { background: #34c759; }
+        .bseas-toggle input:checked + .bseas-toggle-slider::before { transform: translateX(16px); }
+        .bseas-toggle:active .bseas-toggle-slider::before { width: 26px; }
+        .bseas-toggle input:disabled + .bseas-toggle-slider { opacity: 0.45; cursor: default; }
+        .bseas-settings-row-action .bseas-toggle { }
+
         .bseas-password-mask { -webkit-text-security:disc; }
-        .bseas-danger-link { display:inline-block; color:#dc2626; font-size:13px; text-decoration:none; cursor:pointer; transition:color 0.2s; margin-top:16px; }#bseas-clear-cache {
-    color: #00AEEC;
-}
-#bseas-clear-cache:hover {
-    color: #d97706;
-}
-        .bseas-danger-link:hover { color:#991b1b; text-decoration:underline; }
-        .bseas-author-info { margin-top:28px; padding-top:24px; border-top:1px solid var(--bseas-border); text-align:center; }
-        .bseas-author-text { font-size:13px; color:var(--bseas-text-muted); }
-        .bseas-author-link { color:var(--bseas-primary); text-decoration:none; font-weight:400; transition:color 0.2s; }
-        .bseas-author-link:hover { color:var(--bseas-primary-hover); text-decoration:underline; }
-        .bseas-footer { padding:16px 22px; border-top:1px solid var(--bseas-border); display:flex; gap:12px; flex-shrink:0; flex-direction:column; }
-        .bseas-btn { flex:1; min-width:0; padding:12px 8px; border:none; border-radius:var(--bseas-radius-md); font-size:13.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); position:relative; overflow:hidden; }
+        .bseas-danger-link { display:inline-block; color: var(--bseas-danger); font-size:12.5px; text-decoration:none; cursor:pointer; transition: color 0.2s; }
+        .bseas-danger-link:hover { color: #c4281f; text-decoration: underline; }
+        #bseas-clear-cache { color: var(--bseas-primary); }
+        #bseas-clear-cache:hover { color: var(--bseas-warning); }
+
+        .bseas-author-info { margin-top:20px; padding-top:18px; border-top: 0.5px solid var(--bseas-border); text-align:center; }
+        .bseas-author-text { font-size:12px; color: var(--bseas-text-muted); }
+        .bseas-author-link { color: var(--bseas-primary); text-decoration:none; font-weight:500; transition: color 0.2s; }
+        .bseas-author-link:hover { color: var(--bseas-primary-hover); text-decoration: underline; }
+        .bseas-footer {
+            padding:14px 22px;
+            background: rgba(255,255,255,0.72);
+            backdrop-filter: blur(24px) saturate(180%);
+            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            border-top: 0.5px solid var(--bseas-border);
+            display:flex; gap:10px; flex-direction:column;
+            position:absolute; left:0; right:0; bottom:0; z-index:6;
+        }
+        .bseas-btn { flex:1; min-width:0; padding:12px 8px; border:0.5px solid var(--bseas-border); border-radius:var(--bseas-radius-md); font-size:13.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); position:relative; overflow:hidden; backdrop-filter:blur(8px) saturate(140%); -webkit-backdrop-filter:blur(8px) saturate(140%); }
         .bseas-btn::before { content:''; position:absolute; top:0; left:-100%; width:100%; height:100%; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.1),transparent); transition:left 0.5s ease; }
         .bseas-btn:hover:not(:disabled)::before { left:100%; }
-        .bseas-btn-primary { background:var(--bseas-primary); color:white; }
+        .bseas-btn-primary { background:rgba(0,174,236,0.88); color:white; }
         .bseas-btn-primary:hover:not(:disabled) { background:var(--bseas-primary-hover); transform:translateY(-1px); box-shadow:0 4px 12px rgba(0,174,236,0.2); }
         .bseas-btn-primary:active:not(:disabled) { transform:translateY(0); }
         .bseas-btn-primary:disabled { opacity:0.5; cursor:not-allowed; }
-        .bseas-btn-secondary { background:white; color:var(--bseas-text); border:1px solid var(--bseas-border); }
-        .bseas-btn-secondary:hover:not(:disabled) { background:#f8fafc; border-color:#cbd5e1; transform:translateY(-1px); box-shadow:0 2px 8px rgba(0,0,0,0.04); }
+        .bseas-btn-secondary { background:rgba(255,255,255,0.78); color:var(--bseas-text); }
+        .bseas-btn-secondary:hover:not(:disabled) { background:rgba(248,250,252,0.9); border-color:#cbd5e1; transform:translateY(-1px); box-shadow:0 2px 8px rgba(0,0,0,0.04); }
         .bseas-btn-secondary:active:not(:disabled) { transform:translateY(0); }
         .bseas-btn-secondary:disabled { opacity:0.5; cursor:not-allowed; }
         .bseas-toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%) translateY(16px) scale(0.95); background:rgba(15,23,42,0.95); color:white; padding:12px 24px; border-radius:12px; font-size:14px; font-weight:500; opacity:0; transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.16,1,0.3,1); z-index:100001; pointer-events:none; white-space:nowrap; max-width:80vw; }
@@ -468,15 +551,23 @@
         .bseas-toast.error { background:rgba(239,68,68,0.95); }
         .bseas-toast.warning { background:rgba(255,193,7,0.95); }
         .bseas-settings-input:disabled,
-        .bseas-settings-check-row.disabled-setting {
+        .bseas-settings-row.disabled-setting {
             opacity: 0.45;
             pointer-events: none;
             filter: grayscale(60%);
             background-color: #f1f5f9;
         }
-        .bseas-settings-check-row.disabled-setting {
+        .bseas-settings-row.disabled-setting {
             cursor: default;
         }
+        .bseas-disclaimer-link { display:inline-block; color: var(--bseas-primary); font-size:12.5px; text-decoration:none; cursor:pointer; transition: color 0.2s; }
+        .bseas-disclaimer-link:hover { color: var(--bseas-primary-hover); text-decoration: underline; }
+        .bseas-disclaimer-card { display:flex; align-items:center; justify-content:space-between; margin-top:12px; padding:11px 14px; border:0.5px solid var(--bseas-border); border-radius:var(--bseas-radius-md); background:var(--bseas-bg-card); text-decoration:none; transition:all 0.2s; }
+        .bseas-disclaimer-card:hover { border-color:var(--bseas-primary); background:white; }
+        .bseas-dc-left { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500; color:var(--bseas-text); }
+        .bseas-dc-left svg { color:var(--bseas-primary); }
+        .bseas-dc-arrow { color:var(--bseas-text-dim); transition:all 0.2s; }
+        .bseas-disclaimer-card:hover .bseas-dc-arrow { color:var(--bseas-primary); transform:translateX(2px); }
     `);
 
     // ===================== 6. 全局状态 =====================
@@ -567,7 +658,8 @@
     function getVideoTags() { const els = document.querySelectorAll('.tag-link .tag-name'); return els.length ? Array.from(els).map(t => t.textContent.trim()) : []; }
     function sanitizeFilename(name) { return (name || 'subtitle').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 100); }
     function compareVersions(v1, v2) {
-        const p1 = v1.split('.').map(Number), p2 = v2.split('.').map(Number);
+        const toNum = s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; };
+        const p1 = v1.split('.').map(toNum), p2 = v2.split('.').map(toNum);
         for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
             const a = p1[i] || 0, b = p2[i] || 0;
             if (a > b) return 1; if (a < b) return -1;
@@ -611,7 +703,7 @@
         GM_xmlhttpRequest({
             method: 'GET', url: CHANGELOG_RAW_URL, timeout: 8000,
             onload: function (response) {
-                if (response.status === 200) { const m = response.responseText.match(/##\s*\[([^\]]+)\]/); if (m && m[1]) githubCheckResult = { version: m[1].trim() }; }
+                if (response.status === 200) { const m = response.responseText.match(/##\s*\[([^\]]+)\]/); if (m && m[1] && /^\d+\.\d+\.\d+[-\w.]*$/.test(m[1].trim())) githubCheckResult = { version: m[1].trim() }; }
                 githubCheckDone = true; resolveUpdateAfterChecks();
             },
             onerror: () => { log('更新检测: 网络请求失败'); githubCheckDone = true; resolveUpdateAfterChecks(); },
@@ -622,7 +714,7 @@
         const hint = document.getElementById('bseas-ad-hint');
         if (hint && !hint.querySelector('.bseas-update-badge')) {
             const badge = document.createElement('a');
-            badge.href = updateLinkUrl || SCRIPTCAT_URL; badge.target = '_blank';
+            badge.href = updateLinkUrl || SCRIPTCAT_URL; badge.target = '_blank'; badge.rel = 'noopener noreferrer';
             badge.className = 'bseas-update-badge'; badge.textContent = '新版本 v' + latestVersion;
             hint.appendChild(badge);
         }
@@ -720,6 +812,7 @@
             if (bq) { out.push(`<blockquote>${processInline(bq[1])}</blockquote>`); continue; }
             out.push(`<p>${processInline(t)}</p>`);
         }
+        if (inCode) { out.push('<pre><code>' + escapeHtml(code.join('\n')) + '</code></pre>'); }
         while (stack.length) out.push(`</${stack.pop().type}>`);
         return out.join('\n');
     }
@@ -822,7 +915,7 @@
         if (currentAbortController) { try { currentAbortController.abort(); } catch (e) {} currentAbortController = null; }
         if (currentGMXHR && typeof currentGMXHR.abort === 'function') { try { currentGMXHR.abort(); } catch (e) {} currentGMXHR = null; }
     }
-    async function callAPIStream(messages, onChunk) {
+    function buildAPIRequest(messages, stream) {
         const isClaude = bseas_api_url.includes('anthropic.com');
         const isGemini = bseas_api_url.includes('generativelanguage.googleapis.com');
         const actualModel = bseas_model.replace(' (免费)', '');
@@ -833,18 +926,28 @@
         if (isClaude) {
             headers['x-api-key'] = safeApiKey;
             headers['anthropic-version'] = '2023-06-01';
-            headers['Accept'] = 'text/event-stream';
-            bodyData = { model: actualModel, max_tokens: 8192, stream: true, messages: messages };
+            if (stream) headers['Accept'] = 'text/event-stream';
+            bodyData = { model: actualModel, max_tokens: 8192, messages: messages };
+            if (stream) bodyData.stream = true;
         } else if (isGemini) {
             fetchUrl = fetchUrl.replace('{model_name}', actualModel);
-            if (fetchUrl.includes(':generateContent')) fetchUrl = fetchUrl.replace(':generateContent', ':streamGenerateContent');
-            fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${safeApiKey}&alt=sse`;
+            if (stream) {
+                if (fetchUrl.includes(':generateContent')) fetchUrl = fetchUrl.replace(':generateContent', ':streamGenerateContent');
+                fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${safeApiKey}&alt=sse`;
+            } else {
+                fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${safeApiKey}`;
+            }
             bodyData = { contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) };
         } else {
             headers['Authorization'] = `Bearer ${safeApiKey}`;
-            headers['Accept'] = 'text/event-stream';
-            bodyData = { model: actualModel, messages: messages, stream: true };
+            if (stream) headers['Accept'] = 'text/event-stream';
+            bodyData = { model: actualModel, messages: messages };
+            if (stream) bodyData.stream = true;
         }
+        return { fetchUrl, headers, bodyData, isClaude, isGemini };
+    }
+    async function callAPIStream(messages, onChunk) {
+        const { fetchUrl, headers, bodyData, isClaude, isGemini } = buildAPIRequest(messages, true);
         currentAbortController = new AbortController();
         const resp = await fetch(fetchUrl, { method: 'POST', headers, body: JSON.stringify(bodyData), signal: currentAbortController.signal });
         if (!resp.ok) {
@@ -896,24 +999,7 @@
     }
     function callAPINoStream(messages) {
         return new Promise((resolve, reject) => {
-            const isClaude = bseas_api_url.includes('anthropic.com');
-            const isGemini = bseas_api_url.includes('generativelanguage.googleapis.com');
-            const actualModel = bseas_model.replace(' (免费)', '');
-            let fetchUrl = bseas_api_url;
-            const safeApiKey = bseas_api_key.replace(/[^\x20-\x7E]/g, '');
-            const headers = { 'Content-Type': 'application/json' };
-            let bodyData = {};
-            if (isClaude) {
-                headers['x-api-key'] = safeApiKey; headers['anthropic-version'] = '2023-06-01';
-                bodyData = { model: actualModel, max_tokens: 8192, messages: messages };
-            } else if (isGemini) {
-                fetchUrl = fetchUrl.replace('{model_name}', actualModel);
-                fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${safeApiKey}`;
-                bodyData = { contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) };
-            } else {
-                headers['Authorization'] = `Bearer ${safeApiKey}`;
-                bodyData = { model: actualModel, messages: messages };
-            }
+            const { fetchUrl, headers, bodyData, isClaude, isGemini } = buildAPIRequest(messages, false);
             currentGMXHR = GM_xmlhttpRequest({
                 method: 'POST', url: fetchUrl, headers, data: JSON.stringify(bodyData), timeout: 60000,
                 onload(r) {
@@ -950,14 +1036,59 @@
         if (commentsText) contextInfo += `===== 热门评论（按热度排序）=====\n${commentsText}\n\n`;
         return `${getAISummaryPrompt(hasSubtitle, includeFormatRules)}\n\n${contextInfo}${hasSubtitle ? '===== 视频字幕 =====\n' + subtitleText : ''}`;
     }
+    function createThrottledRenderer(el, options) {
+        options = options || {};
+        const shouldRender = options.shouldRender || (() => true);
+        const autoScroll = !!options.autoScroll;
+        const throttleMs = options.throttleMs != null ? options.throttleMs : 80;
+        let lastRenderTime = 0;
+        let pendingText = null;
+        let timerId = null;
+        function doRender(text) {
+            if (!shouldRender()) return;
+            safeSetInnerHTML(el, markdownToHtml(text));
+            renderLatex(el);
+            if (autoScroll) el.scrollTop = el.scrollHeight;
+        }
+        function flush() {
+            timerId = null;
+            if (pendingText === null) return;
+            const text = pendingText;
+            pendingText = null;
+            lastRenderTime = Date.now();
+            doRender(text);
+        }
+        return {
+            update(text) {
+                pendingText = text;
+                const now = Date.now();
+                const elapsed = now - lastRenderTime;
+                if (elapsed >= throttleMs) {
+                    lastRenderTime = now;
+                    pendingText = null;
+                    doRender(text);
+                } else if (timerId === null) {
+                    timerId = setTimeout(flush, throttleMs - elapsed);
+                }
+            },
+            finalize(text) {
+                if (timerId !== null) { clearTimeout(timerId); timerId = null; }
+                pendingText = null;
+                lastRenderTime = Date.now();
+                doRender(text);
+            },
+            cancel() {
+                if (timerId !== null) { clearTimeout(timerId); timerId = null; }
+                pendingText = null;
+            }
+        };
+    }
     async function generateAISummaryStream(subtitleText, streamEl) {
         const fullPrompt = buildFullPrompt(subtitleText);
         const messages = [{ role: 'user', content: fullPrompt }];
-        let summary = await callAPIStream(messages, text => {
-            safeSetInnerHTML(streamEl, markdownToHtml(text));
-            renderLatex(streamEl);
-            streamEl.scrollTop = streamEl.scrollHeight;
-        });
+        const renderer = createThrottledRenderer(streamEl, { autoScroll: true });
+        let summary = await callAPIStream(messages, text => renderer.update(text));
+        renderer.finalize(summary);
         let adCheck = extractAdSegments(summary);
         lastAdCheckResult = adCheck;
 
@@ -1040,7 +1171,12 @@
         setLoadingState(false);
         updateUI(); updateContent(); afterLoad();
     }
+    let _lastTabIndex = 0;
     function switchTab(tab) {
+        if (tab === currentTab) return;
+        const newIdx = TAB_ORDER.indexOf(tab);
+        const direction = newIdx >= _lastTabIndex ? 'right' : 'left';
+        _lastTabIndex = newIdx < 0 ? 0 : newIdx;
         currentTab = tab;
         const tabsEl = document.querySelector('.bseas-tabs');
         if (tabsEl) tabsEl.classList.toggle('hidden', tab === 'settings');
@@ -1052,6 +1188,15 @@
             fSettings.style.display = tab === 'settings' ? 'flex' : 'none';
         }
         updateContent();
+        const panel = document.querySelector('.bseas-panel');
+        const _ft2 = panel?.querySelector('.bseas-footer');
+        if (_ft2 && panel.classList.contains('show')) panel.style.setProperty('--bseas-footer-h', (_ft2.offsetHeight + 14) + 'px');
+        const animTarget = document.querySelector('.bseas-tab-body');
+        if (animTarget) {
+            animTarget.classList.remove('anim-right', 'anim-left');
+            void animTarget.offsetWidth;
+            animTarget.classList.add(direction === 'right' ? 'anim-right' : 'anim-left');
+        }
     }
 
     // ===================== 17. UI 创建与事件 =====================
@@ -1063,7 +1208,7 @@
         safeSetInnerHTML(c, `
             <button class="bseas-trigger-btn" title="B站字幕获取、AI分析及广告跳过工具（可拖拽）"><svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6zm10 0h2v2h-2zm-6-4h8v2h-8z"/></svg><span class="bseas-status-dot"></span></button>
             <div class="bseas-panel">
-                <div class="bseas-header">
+                <div class="bseas-content"><div class="bseas-sticky-top"><div class="bseas-header">
                     <div class="bseas-header-text">
                         <div class="bseas-title">B站字幕获取、AI分析及广告跳过 <span class="bseas-platform-tag">BiliBili</span></div>
                         <div class="bseas-subtitle-info">点击刷新</div>
@@ -1076,8 +1221,7 @@
                 </div>
                 <div class="bseas-api-warning-container">${showApiWarning ? `<div class="bseas-api-warning"><span class="bseas-api-warning-icon">⚠</span><span class="bseas-api-warning-text">未设置API Key，AI分析功能将无法使用</span><button class="bseas-api-warning-btn" id="bseas-go-settings">去设置</button></div>` : ''}</div>
                 <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">选择字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-source-body hidden" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div>
-                <div class="bseas-tabs"><button class="bseas-tab active" data-tab="preview">浏览</button><button class="bseas-tab" data-tab="ai">AI 分析</button><button class="bseas-tab" data-tab="text">文本</button></div>
-                <div class="bseas-content"><div class="bseas-empty">正在初始化...</div></div>
+                <div class="bseas-tabs"><button class="bseas-tab active" data-tab="preview">浏览</button><button class="bseas-tab" data-tab="ai">AI 分析</button><button class="bseas-tab" data-tab="text">文本</button></div></div><div class="bseas-tab-body"><div class="bseas-empty">正在初始化...</div></div></div>
                 <div class="bseas-footer">
                     <div id="bseas-footer-normal" style="display:flex;gap:12px;width:100%;">
                         <button class="bseas-btn bseas-btn-secondary" id="bseas-download-txt-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>TXT</button>
@@ -1109,47 +1253,59 @@
         const winH = window.innerHeight;
         const manualPos = GM_getValue('bseas_panel_position', null);
         const preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
+        const TRIGGER_W = 60;
+        const PANEL_W = 430;
+        const RIGHT_ANCHOR_MARGIN = TRIGGER_W - PANEL_W;
 
         container.style.left = 'auto';
         container.style.right = 'auto';
         container.style.top = 'auto';
         container.style.bottom = 'auto';
 
-        panel.style.left = 'auto';
+        panel.style.left = '0';
         panel.style.right = 'auto';
-        panel.style.top = 'auto';
-        panel.style.bottom = 'auto';
 
         if (manualPos) {
             if (manualPos.side === 'left') {
-                container.style.left = Math.max(8, Math.min(winW - 60, manualPos.dist)) + 'px';
-                panel.style.left = '0'; // 向右展开
+                container.style.left = Math.max(8, Math.min(winW - TRIGGER_W - 8, manualPos.dist)) + 'px';
+                container.style.right = 'auto';
+                panel.style.marginLeft = '0px';
             } else {
-                container.style.right = Math.max(8, Math.min(winW - 60, manualPos.dist)) + 'px';
-                panel.style.right = '0'; // 向左展开
+                container.style.right = Math.max(8, Math.min(winW - TRIGGER_W - 8, manualPos.dist)) + 'px';
+                container.style.left = 'auto';
+                panel.style.marginLeft = RIGHT_ANCHOR_MARGIN + 'px';
             }
-            container.style.top = Math.max(8, Math.min(winH - 60, manualPos.top)) + 'px';
+            container.style.top = Math.max(8, Math.min(winH - TRIGGER_W - 8, manualPos.top)) + 'px';
+            container.style.bottom = 'auto';
             panel.style.top = '66px';
+            panel.style.bottom = 'auto';
         } else {
             if (preset.includes('left')) {
                 container.style.left = '24px';
-                panel.style.left = '0';
+                container.style.right = 'auto';
+                panel.style.marginLeft = '0px';
             } else {
                 container.style.right = '24px';
-                panel.style.right = '0';
+                container.style.left = 'auto';
+                panel.style.marginLeft = RIGHT_ANCHOR_MARGIN + 'px';
             }
             if (preset.includes('top')) {
                 container.style.top = '80px';
+                container.style.bottom = 'auto';
                 panel.style.top = '66px';
+                panel.style.bottom = 'auto';
             } else {
                 container.style.bottom = '24px';
+                container.style.top = 'auto';
                 panel.style.bottom = '66px';
+                panel.style.top = 'auto';
             }
         }
     }
     function makeDraggable(container) {
         const handle = container.querySelector('.bseas-header-text');
         const triggerBtn = container.querySelector('.bseas-trigger-btn');
+        const panel = container.querySelector('.bseas-panel');
         function setupDrag(element, isTrigger) {
             let isDragging = false, isMouseDown = false, startX = 0, startY = 0, offsetX = 0, offsetY = 0, hasMoved = false;
             element.addEventListener('mousedown', (e) => {
@@ -1167,6 +1323,7 @@
                 const dx = e.clientX - startX, dy = e.clientY - startY;
                 if (!hasMoved && Math.sqrt(dx * dx + dy * dy) > 5) {
                     hasMoved = true; isDragging = true;
+                    panel.classList.add('no-transition');
                     container.style.right = 'auto';
                     container.style.bottom = 'auto';
                     const rect = container.getBoundingClientRect();
@@ -1188,6 +1345,7 @@
                 if (isDragging) {
                     isDragging = false;
                     document.body.style.userSelect = '';
+                    panel.classList.remove('no-transition');
                     const rect = container.getBoundingClientRect();
                     const winW = window.innerWidth;
                     let side, dist;
@@ -1199,7 +1357,7 @@
                         dist = winW - rect.right;
                     }
                     GM_setValue('bseas_panel_position', { side, dist, top: rect.top });
-                    applySavedPanelPosition(container); // 拖拽结束后标准化面板锚点
+                    applySavedPanelPosition(container);
                     if (isTrigger) element._wasDragged = true;
                 }
             };
@@ -1209,21 +1367,76 @@
         if (handle) setupDrag(handle, false);
         if (triggerBtn) setupDrag(triggerBtn, true);
     }
+    function saveSettings() {
+        bseas_platform = document.getElementById('bseas-s-platform').value;
+        bseas_api_url = document.getElementById('bseas-s-url').value.trim();
+        bseas_api_key = document.getElementById('bseas-s-key').value.trim();
+        const selectedModel = document.getElementById('bseas-s-model-select').value;
+        bseas_model = selectedModel === '自定义' ? document.getElementById('bseas-s-model-custom').value.trim() : selectedModel;
+        bseas_auto_summary = document.getElementById('bseas-s-auto').checked;
+        bseas_opinion_analysis = document.getElementById('bseas-s-opinion').checked;
+        bseas_auto_skip_ad = document.getElementById('bseas-s-auto-skip').checked;
+        bseas_auto_open_panel = document.getElementById('bseas-s-auto-open').checked;
+        bseas_auto_open_tab = document.getElementById('bseas-s-auto-tab').value;
+        bseas_detail_level = document.getElementById('bseas-s-detail').value;
+        bseas_disable_api = document.getElementById('bseas-s-disable-api').checked;
+        bseas_panel_pos_preset = document.getElementById('bseas-s-pos-preset').value;
+        bseas_opinion_comments_count = parseInt(document.getElementById('bseas-s-opinion-count').value) || 30;
+        bseas_max_preview_subtitles = parseInt(document.getElementById('bseas-s-max-preview').value) || 200;
+        bseas_confirm_enabled = document.getElementById('bseas-s-confirm-enable').checked;
+        bseas_confirm_chars = parseInt(document.getElementById('bseas-s-confirm-chars').value) || 20000;
+        GM_setValue('bseas_platform', bseas_platform);
+        GM_setValue('bseas_api_url', bseas_api_url);
+        GM_setValue('bseas_api_key_' + bseas_platform, bseas_api_key);
+        GM_setValue('bseas_model', bseas_model);
+        GM_setValue('bseas_auto_summary', bseas_auto_summary);
+        GM_setValue('bseas_opinion_analysis', bseas_opinion_analysis);
+        GM_setValue('bseas_auto_skip_ad', bseas_auto_skip_ad);
+        GM_setValue('bseas_auto_open_panel', bseas_auto_open_panel);
+        GM_setValue('bseas_auto_open_tab', bseas_auto_open_tab);
+        GM_setValue('bseas_detail_level', bseas_detail_level);
+        GM_setValue('bseas_disable_api', bseas_disable_api);
+        GM_setValue('bseas_panel_pos_preset', bseas_panel_pos_preset);
+        GM_setValue('bseas_opinion_comments_count', bseas_opinion_comments_count);
+        GM_setValue('bseas_max_preview_subtitles', bseas_max_preview_subtitles);
+        GM_setValue('bseas_confirm_enabled', bseas_confirm_enabled);
+        GM_setValue('bseas_confirm_chars', bseas_confirm_chars);
+        GM_deleteValue('bseas_panel_position');
+    }
     function bindEvents(c) {
         const panel = c.querySelector('.bseas-panel');
         const triggerBtn = c.querySelector('.bseas-trigger-btn');
         panel.addEventListener('click', e => e.stopPropagation());
+        let _closeTimer = null;
+        function closePanelWithAnim() {
+            if (!panelVisible) return;
+            panel.classList.add('hiding');
+            if (_closeTimer) clearTimeout(_closeTimer);
+            _closeTimer = setTimeout(() => {
+                panelVisible = false;
+                panel.classList.remove('show', 'hiding');
+            }, 220);
+        }
         triggerBtn.addEventListener('click', (e) => {
             if (triggerBtn._wasDragged) { triggerBtn._wasDragged = false; e.preventDefault(); e.stopPropagation(); return; }
             e.stopPropagation();
-            panelVisible = !panelVisible;
-            panel.classList.toggle('show', panelVisible);
-            if (panelVisible && allSubtitles.length === 0) fetchAllSubtitles();
+            if (panelVisible) { closePanelWithAnim(); }
+            else {
+                if (_closeTimer) { clearTimeout(_closeTimer); _closeTimer = null; }
+                panelVisible = true;
+                panel.classList.remove('hiding');
+                panel.classList.add('show');
+                const _tb = panel.querySelector('.bseas-tab-body');
+                if (_tb) _tb.classList.remove('anim-right', 'anim-left');
+                const _ft = panel.querySelector('.bseas-footer');
+                if (_ft) panel.style.setProperty('--bseas-footer-h', (_ft.offsetHeight + 14) + 'px');
+                if (allSubtitles.length === 0) fetchAllSubtitles();
+            }
         });
         if (_documentClickHandler) document.removeEventListener('click', _documentClickHandler);
         _documentClickHandler = e => {
             if (!panelVisible) return;
-            if (!c.contains(e.target)) { panelVisible = false; panel.classList.remove('show'); }
+            if (!c.contains(e.target)) closePanelWithAnim();
         };
         document.addEventListener('click', _documentClickHandler);
         c.querySelector('#bseas-source-toggle').addEventListener('click', (e) => {
@@ -1242,42 +1455,7 @@
         c.querySelector('#bseas-s-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); switchTab('preview'); });
         c.querySelector('#bseas-s-save')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            bseas_platform = document.getElementById('bseas-s-platform').value;
-            bseas_api_url = document.getElementById('bseas-s-url').value.trim();
-            bseas_api_key = document.getElementById('bseas-s-key').value.trim();
-            const selectedModel = document.getElementById('bseas-s-model-select').value;
-            bseas_model = selectedModel === '自定义' ? document.getElementById('bseas-s-model-custom').value.trim() : selectedModel;
-            bseas_auto_summary = document.getElementById('bseas-s-auto').checked;
-            bseas_opinion_analysis = document.getElementById('bseas-s-opinion').checked;
-            bseas_auto_skip_ad = document.getElementById('bseas-s-auto-skip').checked;
-            bseas_auto_open_panel = document.getElementById('bseas-s-auto-open').checked;
-            bseas_auto_open_tab = document.getElementById('bseas-s-auto-tab').value;
-            bseas_detail_level = document.getElementById('bseas-s-detail').value;
-            bseas_latex = document.getElementById('bseas-s-latex').checked;
-            bseas_disable_api = document.getElementById('bseas-s-disable-api').checked;
-            bseas_panel_pos_preset = document.getElementById('bseas-s-pos-preset').value;
-            bseas_opinion_comments_count = parseInt(document.getElementById('bseas-s-opinion-count').value) || 30;
-            bseas_max_preview_subtitles = parseInt(document.getElementById('bseas-s-max-preview').value) || 1000;
-            bseas_confirm_enabled = document.getElementById('bseas-s-confirm-enable').checked;
-            bseas_confirm_chars = parseInt(document.getElementById('bseas-s-confirm-chars').value) || 20000;
-            GM_setValue('bseas_platform', bseas_platform);
-            GM_setValue('bseas_api_url', bseas_api_url);
-            GM_setValue('bseas_api_key_' + bseas_platform, bseas_api_key);
-            GM_setValue('bseas_model', bseas_model);
-            GM_setValue('bseas_auto_summary', bseas_auto_summary);
-            GM_setValue('bseas_opinion_analysis', bseas_opinion_analysis);
-            GM_setValue('bseas_auto_skip_ad', bseas_auto_skip_ad);
-            GM_setValue('bseas_auto_open_panel', bseas_auto_open_panel);
-            GM_setValue('bseas_auto_open_tab', bseas_auto_open_tab);
-            GM_setValue('bseas_detail_level', bseas_detail_level);
-            GM_setValue('bseas_latex', bseas_latex);
-            GM_setValue('bseas_disable_api', bseas_disable_api);
-            GM_setValue('bseas_panel_pos_preset', bseas_panel_pos_preset);
-            GM_setValue('bseas_opinion_comments_count', bseas_opinion_comments_count);
-            GM_setValue('bseas_max_preview_subtitles', bseas_max_preview_subtitles);
-            GM_setValue('bseas_confirm_enabled', bseas_confirm_enabled);
-            GM_setValue('bseas_confirm_chars', bseas_confirm_chars);
-            GM_deleteValue('bseas_panel_position');
+            saveSettings();
             showToast('✓ 设置已保存', 'success');
             switchTab('preview');
             panelVisible = false;
@@ -1351,7 +1529,7 @@
         updateDotState();
     }
     function updateContent() {
-        const el = document.querySelector('.bseas-content');
+        const el = document.querySelector('.bseas-tab-body');
         if (!el) return;
         if (isLoading) { safeSetInnerHTML(el, '<div class="bseas-loading"><div class="bseas-spinner"></div><div>数据加载中...</div></div>'); return; }
         switch (currentTab) {
@@ -1369,21 +1547,28 @@
         const kwEscaped = escapeHtml(keyword).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         return escaped.replace(new RegExp(kwEscaped, 'gi'), m => `<mark>${m}</mark>`);
     }
+    function filterSubtitles(body) {
+        if (!subtitleSearchKeyword) return body;
+        const kw = subtitleSearchKeyword.toLowerCase();
+        return body.filter(it => it.content.toLowerCase().includes(kw));
+    }
+    function buildSubtitleListHtml(filtered) {
+        const listHtml = filtered.slice(0, bseas_max_preview_subtitles).map(it => `<div class="bseas-subtitle-item" data-time="${escapeHtml(it.from)}"><div class="bseas-ts">${formatTime(it.from)} → ${formatTime(it.to)}</div><div class="bseas-st">${highlightKeyword(it.content, subtitleSearchKeyword)}</div></div>`).join('');
+        const footer = filtered.length > bseas_max_preview_subtitles ? `<div style="text-align:center;color:var(--bseas-text-muted);padding:14px;font-size:13px;">仅展示了前${bseas_max_preview_subtitles}条，可在设置中更改</div>` : (subtitleSearchKeyword && filtered.length === 0 ? '<div class="bseas-empty">未匹配到字幕</div>' : '');
+        return listHtml + footer;
+    }
+    function bindSubtitleItemClicks(container) {
+        container.querySelectorAll('.bseas-subtitle-item').forEach(item => item.addEventListener('click', (e) => { e.stopPropagation(); seekToTime(parseFloat(item.dataset.time)); }));
+    }
     function updatePreviewList() {
         const el = document.querySelector('.bseas-content');
         if (!el || currentTab !== 'preview') return;
         const body = currentSubtitleData?.body || [];
-        let filtered = body;
-        if (subtitleSearchKeyword) {
-            const kw = subtitleSearchKeyword.toLowerCase();
-            filtered = body.filter(it => it.content.toLowerCase().includes(kw));
-        }
+        const filtered = filterSubtitles(body);
         const listContainer = el.querySelector('#bseas-subtitle-list-container');
         if (listContainer) {
-            const listHtml = filtered.slice(0, bseas_max_preview_subtitles).map(it => `<div class="bseas-subtitle-item" data-time="${it.from}"><div class="bseas-ts">${formatTime(it.from)} → ${formatTime(it.to)}</div><div class="bseas-st">${highlightKeyword(it.content, subtitleSearchKeyword)}</div></div>`).join('');
-            const footer = filtered.length > bseas_max_preview_subtitles ? `<div style="text-align:center;color:var(--bseas-text-muted);padding:14px;font-size:13px;">仅展示前${bseas_max_preview_subtitles}条</div>` : (subtitleSearchKeyword && filtered.length === 0 ? '<div class="bseas-empty">未匹配到字幕</div>' : '');
-            safeSetInnerHTML(listContainer, listHtml + footer);
-            listContainer.querySelectorAll('.bseas-subtitle-item').forEach(item => item.addEventListener('click', (e) => { e.stopPropagation(); seekToTime(parseFloat(item.dataset.time)); }));
+            safeSetInnerHTML(listContainer, buildSubtitleListHtml(filtered));
+            bindSubtitleItemClicks(listContainer);
         }
         const countEl = el.querySelector('.bseas-search-count');
         if (countEl) {
@@ -1393,19 +1578,13 @@
     function renderPreviewTab(el) {
         if (!currentSubtitleData?.body?.length) { safeSetInnerHTML(el, '<div class="bseas-empty">未获取到字幕，点击刷新以重试</div>'); return; }
         const body = currentSubtitleData.body;
-        let filtered = body;
-        if (subtitleSearchKeyword) {
-            const kw = subtitleSearchKeyword.toLowerCase();
-            filtered = body.filter(it => it.content.toLowerCase().includes(kw));
-        }
+        const filtered = filterSubtitles(body);
         const cnt = body.length;
         const dur = body[cnt - 1].to;
         const chars = body.reduce((s, i) => s + i.content.length, 0);
         const searchBox = `<div class="bseas-search-box"><input type="text" id="bseas-subtitle-search" class="bseas-search-input" placeholder="搜索字幕内容..." value="${escapeHtml(subtitleSearchKeyword)}">${subtitleSearchKeyword ? `<span class="bseas-search-count">${filtered.length} 条</span>` : ''}</div>`;
         const stats = `<div class="bseas-stats"><div class="bseas-stat-item"><div class="bseas-stat-label">总条数</div><div class="bseas-stat-value">${cnt}</div></div><div class="bseas-stat-item"><div class="bseas-stat-label">总时长</div><div class="bseas-stat-value">${formatTime(dur)}</div></div><div class="bseas-stat-item"><div class="bseas-stat-label">总字数</div><div class="bseas-stat-value">${chars}</div></div></div>`;
-        const listHtml = filtered.slice(0, bseas_max_preview_subtitles).map(it => `<div class="bseas-subtitle-item" data-time="${it.from}"><div class="bseas-ts">${formatTime(it.from)} → ${formatTime(it.to)}</div><div class="bseas-st">${highlightKeyword(it.content, subtitleSearchKeyword)}</div></div>`).join('');
-        const footer = filtered.length > bseas_max_preview_subtitles ? `<div style="text-align:center;color:var(--bseas-text-muted);padding:14px;font-size:13px;">仅展示前${bseas_max_preview_subtitles}条</div>` : (subtitleSearchKeyword && filtered.length === 0 ? '<div class="bseas-empty">未匹配到字幕</div>' : '');
-        safeSetInnerHTML(el, searchBox + stats + `<div id="bseas-subtitle-list-container">${listHtml + footer}</div>`);
+        safeSetInnerHTML(el, searchBox + stats + `<div id="bseas-subtitle-list-container">${buildSubtitleListHtml(filtered)}</div>`);
         const searchInput = el.querySelector('#bseas-subtitle-search');
         if (searchInput) {
             let debounceTimer;
@@ -1426,7 +1605,7 @@
                 }, 200);
             });
         }
-        el.querySelectorAll('.bseas-subtitle-item').forEach(item => item.addEventListener('click', (e) => { e.stopPropagation(); seekToTime(parseFloat(item.dataset.time)); }));
+        bindSubtitleItemClicks(el);
     }
 
     // ===================== 21. AI 分析页渲染 =====================
@@ -1477,7 +1656,7 @@
                     html += `<div class="bseas-followup-section"><div class="bseas-followup-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>追问</div><textarea class="bseas-followup-input" id="bseas-followup-input" placeholder="就视频内容提问" ${isGeneratingAI ? 'disabled' : ''}></textarea><button class="bseas-followup-btn" id="bseas-followup-btn" ${isGeneratingAI ? 'disabled' : ''}>${isGeneratingAI ? '生成中...' : '发送追问'}</button></div>`;
                 }
             }
-            html += `<div style="display:flex;justify-content:flex-end;margin-top:16px;"><label class="bseas-checkbox-label" style="font-size:13px;color:var(--bseas-text-muted);"><input type="checkbox" id="bseas-raw-toggle" ${showRawAIText ? 'checked' : ''}>查看原始文本</label></div>`;
+            html += `<div style="display:flex;justify-content:flex-end;margin-top:16px;margin-bottom:12px;"><label class="bseas-checkbox-label" style="font-size:13px;color:var(--bseas-text-muted);"><input type="checkbox" id="bseas-raw-toggle" ${showRawAIText ? 'checked' : ''}>查看原始文本</label></div>`;
         }
         safeSetInnerHTML(el, html);
         const aiResultEl = el.querySelector('#bseas-ai-result');
@@ -1556,18 +1735,17 @@
                 followupSection.insertAdjacentElement('beforebegin', qaEl);
                 const ansEl = document.getElementById(answerId);
                 aiConversationHistory.push({ role: 'user', content: q });
+                const renderer = createThrottledRenderer(ansEl, { shouldRender: () => myGenerationId === currentGenerationId });
                 try {
-                    const a = await callAPIStream(aiConversationHistory, text => {
-                        if (myGenerationId !== currentGenerationId) return;
-                        safeSetInnerHTML(ansEl, markdownToHtml(text));
-                        renderLatex(ansEl);
-                    });
+                    const a = await callAPIStream(aiConversationHistory, text => renderer.update(text));
                     if (myGenerationId !== currentGenerationId) return;
+                    renderer.finalize(a);
                     aiConversationHistory.push({ role: 'assistant', content: a });
                     appendCachedQA(currentVideoKey, q, a);
                     fInput.value = '';
                     showToast('✓ 回复完成', 'success');
                 } catch (e) {
+                    renderer.cancel();
                     if (myGenerationId !== currentGenerationId) return;
                     safeSetInnerHTML(ansEl, `<span style="color:#ef4444;">❌ 追问失败: ${escapeHtml(e.message)}</span>`);
                     aiConversationHistory.pop();
@@ -1594,75 +1772,186 @@
         const tabOptions = Object.keys(TAB_OPTIONS).map(k => `<option value="${k}" ${bseas_auto_open_tab === k ? 'selected' : ''}>${TAB_OPTIONS[k]}</option>`).join('');
         const detailOptions = Object.keys(DETAIL_LEVELS).map(k => `<option value="${k}" ${bseas_detail_level === k ? 'selected' : ''}>${DETAIL_LEVELS[k]}</option>`).join('');
         const currentPlatformKey = GM_getValue('bseas_api_key_' + bseas_platform, '');
-        const updateBadgeHtml = hasUpdate ? ` <a href="${updateLinkUrl || SCRIPTCAT_URL}" target="_blank" class="bseas-update-badge">新版本 v${latestVersion}</a>` : '';
-        safeSetInnerHTML(el, `<div style="padding:10px 0;">
-            <div class="bseas-settings-group">
-                <div class="bseas-settings-group-title"><span class="bseas-settings-group-title-dot"></span>AI 设置</div>
-                <div class="bseas-settings-subgroup">
-                    <div class="bseas-settings-subgroup-title" style="display:flex;justify-content:space-between;align-items:center;"><span>API</span><span id="bseas-api-hint-btn" style="font-size:12px;font-weight:normal;color:var(--bseas-primary);cursor:pointer;">查看使用提示</span></div>
-                    <div id="bseas-api-hint-box" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:14px 16px;font-size:13px;color:#0369a1;margin-bottom:16px;line-height:1.6;animation:bseas-slideup 0.3s ease;">
-                        <div style="font-weight:bold;margin-bottom:4px;font-size:14px;color:#0c4a6e;">● 前置基础</div>
-                        <ul style="margin:0 0 12px 0;padding-left:20px;"><li style="margin-bottom:4px;"><b>什么是AI API：</b>简单说就是第三方AI大模型开放的调用接口，发送一段文字请求，云端AI服务器就会返回回答。本程序的AI分析、视频总结、广告跳过、舆情分析功能均依赖通过API寻求AI回答。</li><li><b>什么是API Key（密钥）：</b>相当于你的AI接口「门禁密码」，每一次调用AI都需要携带这个密钥验证身份、扣除额度，密钥请勿泄露。本程序开源可查，不会上传您的API Key。</li></ul>
-                        <div style="font-weight:bold;margin-bottom:4px;font-size:14px;color:#0c4a6e;">● 获取API Key</div>
-                        <ul style="margin:0 0 12px 0;padding-left:20px;"><li style="margin-bottom:4px;">选择心仪的供应商（推荐DeepSeek），点击"获取API Key"跳转至供应商官网，注册账号。如果您选择付费模型，需要小额充值，此充值全部归属于供应商，且可做其他用途。如果您不愿意充值，也可以选择智谱的免费模型。</li><li>找到API密钥入口，创建一个API密钥。不要泄露此密钥！</li></ul>
-                        <div style="font-weight:bold;margin-bottom:4px;font-size:14px;color:#0c4a6e;">● 使用API Key</div>
-                        <ul style="margin:0;padding-left:20px;"><li>在本程序中，选择心仪的供应商和模型，输入API Key即可。<br>由于本程序场景不需要强大的模型能力，建议选择价格较低的模型。</li></ul>
-                    </div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-check-row"><input type="checkbox" id="bseas-s-disable-api" ${bseas_disable_api ? 'checked' : ''}><div class="bseas-settings-check-text"><span class="bseas-settings-check-title">禁用 API（手动模式）</span><span class="bseas-settings-check-desc">开启后将不调用 AI 接口，改为提供提示词复制键。您可将提示词粘贴给外部 AI 工具进行分析。广告跳过功能将不可用。</span></div></label></div>
-                    <div style="border-top:1px solid #e2e8f0; margin:8px 0; opacity:0.5;"></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-block-label">平台 / 供应商</label><select class="bseas-settings-input" id="bseas-s-platform">${pOptions}</select><div style="margin-top:8px;"><a id="bseas-s-link" href="#" target="_blank" style="font-size:12px;color:var(--bseas-primary);text-decoration:none;">获取 API Key →</a></div></div>
-                    <div class="bseas-settings-block" id="bseas-url-wrapper" style="display:${bseas_platform === 'custom' ? 'block' : 'none'};"><label class="bseas-settings-block-label">API URL Endpoint</label><input type="text" class="bseas-settings-input" id="bseas-s-url" value="${escapeHtml(bseas_api_url)}"></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-block-label">模型</label><select class="bseas-settings-input" id="bseas-s-model-select"></select><input type="text" class="bseas-settings-input" id="bseas-s-model-custom" style="margin-top:8px;display:none;" placeholder="输入自定义模型名..." value="${escapeHtml(bseas_model)}"></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-block-label">API Key</label><input type="text" class="bseas-settings-input bseas-password-mask" id="bseas-s-key" value="${escapeHtml(currentPlatformKey)}" placeholder="输入API Key..."><div style="font-size:12px;color:var(--bseas-text-muted);margin-top:6px;">本程序不会上传API Key。请勿泄露您的API Key！</div></div>
+        const updateBadgeHtml = hasUpdate ? ` <a href="${updateLinkUrl || SCRIPTCAT_URL}" target="_blank" rel="noopener noreferrer" class="bseas-update-badge">新版本 v${escapeHtml(latestVersion)}</a>` : '';
+        safeSetInnerHTML(el, `<div class="bseas-settings">
+    <section class="bseas-settings-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 4px 8px 4px;">
+            <div class="bseas-settings-section-title" style="margin:0;">API 配置</div>
+            <span id="bseas-api-hint-btn" style="font-size:12px;font-weight:500;color:var(--bseas-primary);cursor:pointer;letter-spacing:0;">查看使用提示</span>
+        </div>
+        <div id="bseas-api-hint-box" style="display:none;background:rgba(0,174,236,0.05);border:1px solid rgba(0,174,236,0.15);border-radius:12px;padding:14px;font-size:12.5px;color:#0c4a6e;margin-bottom:10px;line-height:1.65;animation:bseas-slideup 0.3s var(--ease-out);">
+            <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">前置基础</div>
+            <ul style="margin:0 0 10px 0;padding-left:18px;"><li style="margin-bottom:4px;"><b>什么是 AI API：</b>第三方 AI 大模型开放的调用接口，发送文字请求，云端 AI 服务器返回回答。本程序的 AI 分析、视频总结、广告跳过、舆情分析功能均依赖此接口。</li><li><b>什么是 API Key（密钥）：</b>相当于 AI 接口的「门禁密码」，每次调用 AI 都需要携带此密钥验证身份、扣除额度。密钥请勿泄露。本程序开源可查，不会上传您的 API Key。</li></ul>
+            <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">获取 API Key</div>
+            <ul style="margin:0 0 10px 0;padding-left:18px;"><li style="margin-bottom:4px;">选择心仪的供应商（推荐 DeepSeek），点击「获取 API Key」跳转至供应商官网，注册账号。付费模型需小额充值（归属供应商）。也可选择智谱的免费模型。</li><li>找到 API 密钥入口，创建一个 API 密钥。不要泄露此密钥！</li></ul>
+            <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">使用 API Key</div>
+            <ul style="margin:0;padding-left:18px;"><li>在本程序中选择供应商和模型，输入 API Key 即可。本程序场景不需要强大的模型能力，建议选择价格较低的模型。</li></ul>
+        </div>
+        <div class="bseas-settings-card">
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">禁用 API（手动模式）</div>
+                    <div class="bseas-settings-row-desc">开启后将不调用 AI 接口，改为提供提示词复制键。您可将提示词粘贴给外部 AI 工具进行分析。广告跳过功能将不可用。</div>
                 </div>
-                <div class="bseas-settings-subgroup">
-                    <div class="bseas-settings-subgroup-title">AI 分析</div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-block-label">详细程度</label><select class="bseas-settings-input" id="bseas-s-detail">${detailOptions}</select></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-check-row"><input type="checkbox" id="bseas-s-auto" ${bseas_auto_summary ? 'checked' : ''}><div class="bseas-settings-check-text"><span class="bseas-settings-check-title">自动分析</span><span class="bseas-settings-check-desc">开启后自动进行 AI 分析</span></div></label></div>
-                    <div class="bseas-settings-block">
-                    <div style="border-top:1px solid #e2e8f0; margin:8px 0; opacity:0.5;"></div>
-                        <label class="bseas-settings-check-row ${!bseas_confirm_enabled ? 'disabled-setting' : ''}">
-                            <input type="checkbox" id="bseas-s-confirm-enable" ${bseas_confirm_enabled ? 'checked' : ''}>
-                            <div class="bseas-settings-check-text">
-                                <span class="bseas-settings-check-title">启用二次确认</span>
-                                <span class="bseas-settings-check-desc">关闭后，无论字幕多少都不会弹出确认框，直接调用 AI。</span>
-                            </div>
-                        </label>
-                    </div>
-                    <div class="bseas-settings-block">
-                        <label class="bseas-settings-block-label">二次确认字数阈值</label>
-                        <input type="number" class="bseas-settings-input" id="bseas-s-confirm-chars" value="${bseas_confirm_chars}" min="1000" ${!bseas_confirm_enabled ? 'disabled' : ''}>
-                        <div style="font-size:12px;color:var(--bseas-text-muted);margin-top:6px;">当字幕文字量超过此阈值时，调用AI分析需要二次确认，以免浪费Tokens。此处字数包括时间戳。</div>
-                    </div>
-                    <div style="border-top:1px solid #e2e8f0; margin:8px 0; opacity:0.5;"></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-check-row"><input type="checkbox" id="bseas-s-latex" ${bseas_latex ? 'checked' : ''}><div class="bseas-settings-check-text"><span class="bseas-settings-check-title">LaTeX 公式渲染 (Beta)</span><span class="bseas-settings-check-desc">开启后 AI 可以输出并渲染 LaTeX 公式。目前正在测试中，可能不稳定。</span></div></label></div>
-                </div>
-                <div class="bseas-settings-subgroup">
-                    <div class="bseas-settings-subgroup-title">广告跳过</div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-check-row"><input type="checkbox" id="bseas-s-auto-skip" ${bseas_auto_skip_ad ? 'checked' : ''}><div class="bseas-settings-check-text"><span class="bseas-settings-check-title">广告自动跳过</span><span class="bseas-settings-check-desc">开启后检测到广告时段将自动跳过。关闭后仅在进度条标黄提示，不自动跳转。</span></div></label></div>
-                </div>
-                <div class="bseas-settings-subgroup">
-                    <div class="bseas-settings-subgroup-title">舆情分析</div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-check-row"><input type="checkbox" id="bseas-s-opinion" ${bseas_opinion_analysis ? 'checked' : ''}><div class="bseas-settings-check-text"><span class="bseas-settings-check-title">舆论分析（热门评论）</span><span class="bseas-settings-check-desc">开启后AI分析将获取热门评论并包含对评论的舆论倾向分析。</span></div></label></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-block-label">最大获取评论数</label><input type="number" class="bseas-settings-input" id="bseas-s-opinion-count" value="${bseas_opinion_comments_count}" min="0" max="100"></div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-disable-api" ${bseas_disable_api ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
                 </div>
             </div>
-            <div class="bseas-settings-group">
-                <div class="bseas-settings-group-title"><span class="bseas-settings-group-title-dot"></span>面板设置</div>
-                <div class="bseas-settings-subgroup">
-                    <div class="bseas-settings-block"><label class="bseas-settings-check-row"><input type="checkbox" id="bseas-s-auto-open" ${bseas_auto_open_panel ? 'checked' : ''}><div class="bseas-settings-check-text"><span class="bseas-settings-check-title">自动打开面板</span><span class="bseas-settings-check-desc">开启后自动打开面板。仅在有字幕的视频中生效。</span></div></label></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-block-label">自动打开的标签页</label><select class="bseas-settings-input" id="bseas-s-auto-tab" ${!bseas_auto_open_panel ? 'disabled' : ''}>${tabOptions}</select></div>
-                    <div style="border-top:1px solid #e2e8f0; margin:8px 0; opacity:0.5;"></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-block-label">按钮默认位置</label><select class="bseas-settings-input" id="bseas-s-pos-preset"><option value="top-left" ${bseas_panel_pos_preset === 'top-left' ? 'selected' : ''}>左上</option><option value="top-right" ${bseas_panel_pos_preset === 'top-right' ? 'selected' : ''}>右上</option><option value="bottom-left" ${bseas_panel_pos_preset === 'bottom-left' ? 'selected' : ''}>左下</option><option value="bottom-right" ${bseas_panel_pos_preset === 'bottom-right' ? 'selected' : ''}>右下</option></select></div>
-                    <div style="border-top:1px solid #e2e8f0; margin:8px 0; opacity:0.5;"></div>
-                    <div class="bseas-settings-block"><label class="bseas-settings-block-label">浏览页加载字幕数量</label><input type="number" class="bseas-settings-input" id="bseas-s-max-preview" value="${bseas_max_preview_subtitles}" min="1"><div style="font-size:12px;color:var(--bseas-text-muted);margin-top:6px;">为避免页面卡顿，浏览页最多渲染此数量的字幕。</div></div>
+            <div class="bseas-settings-row">
+                <label class="bseas-settings-stack-label">平台 / 供应商</label>
+                <select class="bseas-settings-input" id="bseas-s-platform">${pOptions}</select>
+                <div style="margin-top:8px;"><a id="bseas-s-link" href="#" target="_blank" rel="noopener noreferrer" style="font-size:12px;color:var(--bseas-primary);text-decoration:none;font-weight:500;">获取 API Key →</a></div>
+            </div>
+            <div class="bseas-settings-row" id="bseas-url-wrapper" style="display:${bseas_platform === 'custom' ? 'block' : 'none'};">
+                <label class="bseas-settings-stack-label">API URL Endpoint</label>
+                <input type="text" class="bseas-settings-input" id="bseas-s-url" value="${escapeHtml(bseas_api_url)}">
+            </div>
+            <div class="bseas-settings-row">
+                <label class="bseas-settings-stack-label">模型</label>
+                <select class="bseas-settings-input" id="bseas-s-model-select"></select>
+                <input type="text" class="bseas-settings-input" id="bseas-s-model-custom" style="margin-top:8px;display:none;" placeholder="输入自定义模型名..." value="${escapeHtml(bseas_model)}">
+            </div>
+            <div class="bseas-settings-row">
+                <label class="bseas-settings-stack-label">API Key</label>
+                <input type="text" class="bseas-settings-input bseas-password-mask" id="bseas-s-key" value="${escapeHtml(currentPlatformKey)}" placeholder="输入 API Key...">
+                <div class="bseas-settings-hint">本程序不会上传 API Key。请勿泄露您的 API Key！</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bseas-settings-section">
+        <div class="bseas-settings-section-title">AI 分析</div>
+        <div class="bseas-settings-card">
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">详细程度</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <select class="bseas-settings-input" id="bseas-s-detail">${detailOptions}</select>
                 </div>
             </div>
-            <div class="bseas-author-info"><div class="bseas-ext-links"><a href="${GITHUB_REPO_URL}" target="_blank" class="bseas-ext-link"><svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a><a href="${GREASYFORK_URL}" target="_blank" class="bseas-ext-link"><svg viewBox="0 0 1024 1024"><path d="M514.56 514.56m-486.4 0a486.4 486.4 0 1 0 972.8 0 486.4 486.4 0 1 0-972.8 0Z"/><path d="M389.376 249.856c102.0416 103.0144 103.9872 105.8816 99.1744 141.5168-3.84 37.5296-3.84 37.5296 172.3392 216.576 97.2288 98.2016 177.152 183.8592 177.152 190.6176 0 26.9312-21.1968 49.1008-45.2608 49.1008-20.224 0-62.5664-36.5568-204.0832-177.152-153.088-152.1152-181.9648-176.1792-196.4032-168.448-31.744 18.2784-57.7536 0.9728-159.7952-101.0688-76.0832-76.0832-98.2016-103.9872-93.3888-117.4528 5.7856-14.4384 19.2512-3.84 82.7904 58.7264L298.9056 418.304l21.1968-21.1968 21.1968-21.1968-75.1104-75.9808c-50.0736-51.0464-71.2192-77.9776-63.5392-82.7904 7.68-4.8128 38.5024 20.224 85.6576 66.4064L361.472 356.7104l22.1184-21.1968 21.1968-22.1184-73.1648-73.1648C268.0832 175.7184 250.7776 144.896 277.7088 144.896c3.84 0 53.9136 47.2064 111.6672 104.96z" fill="#FFFFFF"/></svg>Greasy Fork</a><a href="${SCRIPTCAT_URL}" target="_blank" class="bseas-ext-link"><svg viewBox="0 0 1024 1024" width="14" height="14"><path fill="currentColor" d="M501.333333 273.322667c-63.146667 0-69.461333 6.698667-102.144 6.698666C371.968 280.021333 290.218667 213.333333 249.386667 213.333333c-40.874667 0-88.533333 24.021333-88.533334 93.354667v80c0.085333 20.992 7.68 85.333333 37.546667 68.138667-35.285333 41.728-38.826667 90.410667-38.357333 137.514666-9.514667 2.730667-19.2 5.845333-28.629334 9.045334-29.184 9.984-60.16 22.698667-74.112 31.744a32 32 0 0 0 34.730667 53.76c6.656-4.309333 30.762667-14.933333 60.074667-24.96l9.728-3.2c1.962667 18.474667 6.869333 35.413333 14.165333 50.773333l-1.024 0.554667c-17.493333 9.216-33.706667 19.84-44.032 26.581333l-4.821333 3.157333a32 32 0 1 0 34.730666 53.76l5.589334-3.669333c10.453333-6.826667 23.850667-15.573333 38.442666-23.253333 3.413333-1.834667 6.698667-3.456 9.856-4.949334C288.554667 830.933333 421.12 853.333333 501.333333 853.333333s212.778667-22.4 286.592-91.648c3.157333 1.493333 6.4 3.114667 9.856 4.949334 14.592 7.68 27.989333 16.426667 38.442667 23.253333l5.589333 3.669333a32 32 0 0 0 34.730667-53.76l-4.821333-3.157333a555.008 555.008 0 0 0-44.032-26.581333l-1.024-0.554667c7.296-15.36 12.202667-32.298667 14.165333-50.773333l9.728 3.2c29.312 10.026667 53.418667 20.650667 60.117333 24.96a32 32 0 0 0 34.688-53.76c-13.952-9.045333-44.928-21.76-74.069333-31.744-9.429333-3.2-19.157333-6.314667-28.672-9.088 0.512-47.104-3.072-95.744-38.4-137.472 29.866667 17.194667 37.546667-47.146667 37.589333-68.181334V306.688C841.813333 237.354667 794.154667 213.333333 753.28 213.333333c-40.832 0-122.581333 66.688-149.76 66.688-32.725333 0-39.04-6.698667-102.186667-6.698666z"/></svg>脚本猫</a></div><p class="bseas-author-text">作者: <a href="https://github.com/LiuMashiro" target="_blank" class="bseas-author-link">LiuMashiro</a></p><p class="bseas-author-text" style="margin-top:8px;">字幕获取模块部分使用了M0M Chen的 视频字幕提取器Pro 代码（MIT）</p><p class="bseas-author-text" style="margin-top:12px;font-size:12px;">当前版本: v${SCRIPT_VERSION}${updateBadgeHtml}</p></div>
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">自动AI分析</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-auto" ${bseas_auto_summary ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">启用二次确认</div>
+                    <div class="bseas-settings-row-desc">启用后，当字数超过限制时，AI分析前将向您二次确认。</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-confirm-enable" ${bseas_confirm_enabled ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="bseas-settings-row">
+                <label class="bseas-settings-stack-label">二次确认字数阈值</label>
+                <input type="number" class="bseas-settings-input" id="bseas-s-confirm-chars" value="${bseas_confirm_chars}" min="1000" ${!bseas_confirm_enabled ? 'disabled' : ''}>
+                <div class="bseas-settings-hint">当字幕文字量超过此阈值时需要二次确认，以免浪费 Tokens。此处字数包括时间戳。</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bseas-settings-section">
+        <div class="bseas-settings-section-title">广告跳过</div>
+        <div class="bseas-settings-card">
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">广告自动跳过</div>
+                    <div class="bseas-settings-row-desc">开启后检测到广告时段将自动跳过。关闭后仅在进度条标黄提示，不自动跳转。</div>
+                    <div class="bseas-settings-hint">广告跳过功能仅在AI分析后可用。</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-auto-skip" ${bseas_auto_skip_ad ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bseas-settings-section">
+        <div class="bseas-settings-section-title">舆情分析</div>
+        <div class="bseas-settings-card">
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">舆论分析（热门评论）</div>
+                    <div class="bseas-settings-row-desc">开启后 AI 分析将获取热门评论并包含对评论的舆论倾向分析。</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-opinion" ${bseas_opinion_analysis ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="bseas-settings-row">
+                <label class="bseas-settings-stack-label">最大获取评论数</label>
+                <input type="number" class="bseas-settings-input" id="bseas-s-opinion-count" value="${bseas_opinion_comments_count}" min="0" max="100">
+            </div>
+        </div>
+    </section>
+
+    <section class="bseas-settings-section">
+        <div class="bseas-settings-section-title">面板</div>
+        <div class="bseas-settings-card">
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">自动打开面板</div>
+                    <div class="bseas-settings-row-desc">开启后自动打开面板。仅在有字幕的视频中生效。</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-auto-open" ${bseas_auto_open_panel ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">自动打开的标签页</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <select class="bseas-settings-input" id="bseas-s-auto-tab" ${!bseas_auto_open_panel ? 'disabled' : ''}>${tabOptions}</select>
+                </div>
+            </div>
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">按钮默认位置</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <select class="bseas-settings-input" id="bseas-s-pos-preset"><option value="top-left" ${bseas_panel_pos_preset === 'top-left' ? 'selected' : ''}>左上</option><option value="top-right" ${bseas_panel_pos_preset === 'top-right' ? 'selected' : ''}>右上</option><option value="bottom-left" ${bseas_panel_pos_preset === 'bottom-left' ? 'selected' : ''}>左下</option><option value="bottom-right" ${bseas_panel_pos_preset === 'bottom-right' ? 'selected' : ''}>右下</option></select>
+                </div>
+            </div>
+            <div class="bseas-settings-row">
+                <label class="bseas-settings-stack-label">浏览页加载字幕数量</label>
+                <input type="number" class="bseas-settings-input" id="bseas-s-max-preview" value="${bseas_max_preview_subtitles}" min="1">
+                <div class="bseas-settings-hint">为避免页面卡顿，浏览页最多渲染此数量的字幕。</div>
+            </div>
+        </div>
+    </section>
+
+    <div class="bseas-author-info"><div class="bseas-ext-links"><a href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a><a href="${GREASYFORK_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 1024 1024"><path d="M514.56 514.56m-486.4 0a486.4 486.4 0 1 0 972.8 0 486.4 486.4 0 1 0-972.8 0Z"/><path d="M389.376 249.856c102.0416 103.0144 103.9872 105.8816 99.1744 141.5168-3.84 37.5296-3.84 37.5296 172.3392 216.576 97.2288 98.2016 177.152 183.8592 177.152 190.6176 0 26.9312-21.1968 49.1008-45.2608 49.1008-20.224 0-62.5664-36.5568-204.0832-177.152-153.088-152.1152-181.9648-176.1792-196.4032-168.448-31.744 18.2784-57.7536 0.9728-159.7952-101.0688-76.0832-76.0832-98.2016-103.9872-93.3888-117.4528 5.7856-14.4384 19.2512-3.84 82.7904 58.7264L298.9056 418.304l21.1968-21.1968 21.1968-21.1968-75.1104-75.9808c-50.0736-51.0464-71.2192-77.9776-63.5392-82.7904 7.68-4.8128 38.5024 20.224 85.6576 66.4064L361.472 356.7104l22.1184-21.1968 21.1968-22.1184-73.1648-73.1648C268.0832 175.7184 250.7776 144.896 277.7088 144.896c3.84 0 53.9136 47.2064 111.6672 104.96z" fill="#FFFFFF"/></svg>Greasy Fork</a><a href="${SCRIPTCAT_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 1024 1024" width="14" height="14"><path fill="currentColor" d="M501.333333 273.322667c-63.146667 0-69.461333 6.698667-102.144 6.698666C371.968 280.021333 290.218667 213.333333 249.386667 213.333333c-40.874667 0-88.533333 24.021333-88.533334 93.354667v80c0.085333 20.992 7.68 85.333333 37.546667 68.138667-35.285333 41.728-38.826667 90.410667-38.357333 137.514666-9.514667 2.730667-19.2 5.845333-28.629334 9.045334-29.184 9.984-60.16 22.698667-74.112 31.744a32 32 0 0 0 34.730667 53.76c6.656-4.309333 30.762667-14.933333 60.074667-24.96l9.728-3.2c1.962667 18.474667 6.869333 35.413333 14.165333 50.773333l-1.024 0.554667c-17.493333 9.216-33.706667 19.84-44.032 26.581333l-4.821333 3.157333a32 32 0 1 0 34.730666 53.76l5.589334-3.669333c10.453333-6.826667 23.850667-15.573333 38.442666-23.253333 3.413333-1.834667 6.698667-3.456 9.856-4.949334C288.554667 830.933333 421.12 853.333333 501.333333 853.333333s212.778667-22.4 286.592-91.648c3.157333 1.493333 6.4 3.114667 9.856 4.949334 14.592 7.68 27.989333 16.426667 38.442667 23.253333l5.589333 3.669333a32 32 0 0 0 34.730667-53.76l-4.821333-3.157333a555.008 555.008 0 0 0-44.032-26.581333l-1.024-0.554667c7.296-15.36 12.202667-32.298667 14.165333-50.773333l9.728 3.2c29.312 10.026667 53.418667 20.650667 60.117333 24.96a32 32 0 0 0 34.688-53.76c-13.952-9.045333-44.928-21.76-74.069333-31.744-9.429333-3.2-19.157333-6.314667-28.672-9.088 0.512-47.104-3.072-95.744-38.4-137.472 29.866667 17.194667 37.546667-47.146667 37.589333-68.181334V306.688C841.813333 237.354667 794.154667 213.333333 753.28 213.333333c-40.832 0-122.581333 66.688-149.76 66.688-32.725333 0-39.04-6.698667-102.186667-6.698666z"/></svg>脚本猫</a></div><p class="bseas-author-text">作者: <a href="https://github.com/LiuMashiro" target="_blank" class="bseas-author-link">LiuMashiro</a></p><p class="bseas-author-text" style="margin-top:12px;font-size:12px;">当前版本: v${SCRIPT_VERSION}${updateBadgeHtml}</p></div>
             <div style="text-align:center; margin-top:2px;">
                 <a href="javascript:void(0);" class="bseas-danger-link" id="bseas-clear-cache">清除所有储存</a>
                 <span style="color: var(--bseas-text-muted); margin: 0 4px;">|</span>
                 <a href="javascript:void(0);" class="bseas-danger-link" id="bseas-factory-reset">清除所有储存并恢复出厂设置</a>
+            </div>
+            <div style="text-align:center; margin-top:8px;">
+                <a href="https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/blob/main/LEGAL.md" target="_blank" rel="noopener noreferrer" class="bseas-disclaimer-link" id="bseas-show-disclaimer">说明</a>
             </div>
         </div>`);
         const pSelect = document.getElementById('bseas-s-platform');
@@ -1683,7 +1972,7 @@
             if (!isInit || plat !== 'custom') { if (plat !== 'custom') urlInput.value = pData.url; }
             urlInput.disabled = plat !== 'custom';
             const models = pData.models;
-            mSelect.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+            safeSetInnerHTML(mSelect, models.map(m => `<option value="${m}">${m}</option>`).join(''));
             if (isInit) { if (models.includes(bseas_model)) mSelect.value = bseas_model; else { mSelect.value = '自定义'; mCustom.value = bseas_model; } }
             else mSelect.selectedIndex = 0;
             updateModelCustom();
@@ -1714,6 +2003,8 @@
                     else el.classList.remove('disabled-setting');
                 }
             });
+            const autoSkipCheckbox = document.getElementById('bseas-s-auto-skip');
+            if (autoSkipCheckbox) autoSkipCheckbox.disabled = disabled;
         }
         if (disableApiCheckbox) {
             toggleApiSettings(disableApiCheckbox.checked);
