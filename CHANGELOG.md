@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.0.2]
+
+### Added
+- 支持取消当前视频的广告标记（设为未检测到广告）
+
+### Changed
+- 总字数（带时间戳）不再滚动
+- 广告检测控件视觉调整
+
 ## [2.0.1]
 
 ### Added
