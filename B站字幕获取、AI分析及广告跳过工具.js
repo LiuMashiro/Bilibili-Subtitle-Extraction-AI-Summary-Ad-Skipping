@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.0.1
+// @version      2.0.2
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -40,7 +40,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.0.1';
+    const SCRIPT_VERSION = '2.0.2';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -248,7 +248,7 @@
             --bseas-radius-lg: 20px; --bseas-radius-md: 14px; --bseas-radius-sm: 10px;
             --bseas-warning: #ffc107; --bseas-warning-bg: #fff3cd; --bseas-warning-border: #ffeeba; --bseas-warning-text: #856404;
             --bseas-ad-bg: #ffffff; --bseas-ad-border: #f59e0b; --bseas-ad-text: #92400e;
-            --bseas-ad-button: #f59e0b; --bseas-ad-button-hover: #d97706;
+            --bseas-ad-button: #d97706; --bseas-ad-button-hover: #b45309;
             --bseas-danger: #ff3b30;
             --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
             --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -259,9 +259,9 @@
         .bseas-trigger-btn {
             width: 60px; height: 60px;
             border-radius: 20px;
-            background: rgba(255,255,255,0.62);
-            backdrop-filter: blur(20px) saturate(180%);
-            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            background: rgba(255,255,255,0.82);
+            backdrop-filter: blur(6px) saturate(140%);
+            -webkit-backdrop-filter: blur(6px) saturate(140%);
             border: 1px solid rgba(255,255,255,0.7);
             cursor: grab;
             box-shadow:
@@ -277,7 +277,7 @@
         .bseas-trigger-btn:active { cursor:grabbing; }
         .bseas-trigger-btn:hover {
             transform: translateY(-3px) scale(1.06);
-            background: rgba(255,255,255,0.72);
+            background: rgba(255,255,255,0.90);
             box-shadow:
                 0 22px 52px rgba(0,0,0,0.18),
                 0 6px 14px rgba(0,0,0,0.07),
@@ -399,9 +399,8 @@
         .bseas-stat-item:hover { transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,0.06); }
         .bseas-stat-label { font-size:12px; font-weight:600; color:var(--bseas-text-dim); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .bseas-stat-value { font-size:20px; font-weight:800; color:var(--bseas-text); transition:color 0.2s; }
-        .bseas-stat-item.bseas-stat-compact .bseas-stat-label { overflow:hidden; text-overflow:clip; }
-        .bseas-stat-item.bseas-stat-compact .bseas-stat-label > span { display:inline-block; animation:bseas-marquee 8s linear infinite alternate; }
-        @keyframes bseas-marquee { 0% { transform:translateX(0); } 100% { transform:translateX(var(--marquee-distance, 0px)); } }
+        .bseas-stat-item.bseas-stat-compact { padding:14px 2px; }
+        .bseas-stat-item.bseas-stat-compact .bseas-stat-label { overflow:hidden; text-overflow:clip; white-space:nowrap; }
         .bseas-stat-item:hover .bseas-stat-value { color:var(--bseas-primary); }
         .bseas-subtitle-item { padding:14px 16px; margin-bottom:10px; background:white; border-radius:var(--bseas-radius-md); border:1px solid var(--bseas-border); cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); display:flex; flex-direction:column; gap:6px; position:relative; overflow:hidden; }
         .bseas-subtitle-item::before { content:''; position:absolute; left:0; top:0; width:3px; height:0; background:var(--bseas-primary); transition:height 0.3s ease; }
@@ -437,16 +436,16 @@
         .bseas-markdown blockquote { border-left:4px solid var(--bseas-primary); margin:14px 0; padding:10px 16px; background:#f0f9ff; border-radius:0 var(--bseas-radius-sm) var(--bseas-radius-sm) 0; color:var(--bseas-text-dim); }
         .bseas-markdown hr { border:none; height:1px; background:var(--bseas-border); margin:20px 0; }
         .bseas-sp-box { border-radius:var(--bseas-radius-md); padding:16px 20px; margin-bottom:16px; display:flex; flex-direction:column; gap:10px; }
-        .bseas-sp-box.status-found { background:var(--bseas-ad-bg); border:1px solid var(--bseas-ad-border); box-shadow:0 4px 12px rgba(245,158,11,0.12); padding:0; gap:0; }
-        .status-found .bseas-sp-header-bar { background:var(--bseas-ad-button); color:white; font-size:16px; font-weight:500; padding:10px 16px; line-height:1.3; border-radius:13px 13px 0 0; }
-        .status-found .bseas-sp-body { padding:16px 20px; display:flex; flex-direction:column; gap:14px; }
-        .status-found .bseas-sp-msg { font-size:14px; font-weight:400; color:#000000; line-height:1.5; }
-        .status-found .bseas-sp-action-row { display:flex; align-items:stretch; gap:12px; margin:0; }
-        .status-found .bseas-sp-badge { flex:1; background:#f3f4f6; border:none; border-radius:var(--bseas-radius-sm); padding:9px 20px; font-size:14px; font-weight:500; color:#000000; display:flex; align-items:center; justify-content:flex-start; }
-        .status-found .bseas-sp-skip { background:var(--bseas-ad-button); color:white; border:none; border-radius:var(--bseas-radius-sm); padding:9px 22px; font-size:14px; font-weight:500; cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 2px 8px rgba(245,158,11,0.25); flex-shrink:0; white-space:nowrap; }
-        .status-found .bseas-sp-skip:hover { background:var(--bseas-ad-button-hover); transform:translateY(-1px); box-shadow:0 4px 12px rgba(245,158,11,0.35); }
+        .bseas-sp-box.status-found { background:linear-gradient(135deg,#fffef7 0%,#fffbeb 100%); border:1px solid var(--bseas-ad-border); box-shadow:0 4px 12px rgba(245,158,11,0.08); }
+        .status-found .bseas-sp-header { flex-wrap:nowrap; gap:10px; }
+        .status-found .bseas-sp-title { color:var(--bseas-ad-text); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .status-found .bseas-sp-cancel { background:#ffffff; color:var(--bseas-ad-text); border:1px solid var(--bseas-ad-border); border-radius:10px; padding:6px 14px; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); flex-shrink:0; white-space:nowrap; }
+        .status-found .bseas-sp-cancel:hover { background:#fef3c7; transform:translateY(-1px); }
+        .status-found .bseas-sp-cancel:active { transform:translateY(0) scale(0.98); }
+        .status-found .bseas-sp-skip { background:var(--bseas-ad-button); color:white; border:none; border-radius:10px; padding:6px 14px; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 2px 8px rgba(245,158,11,0.3); flex-shrink:0; white-space:nowrap; }
+        .status-found .bseas-sp-skip:hover { background:var(--bseas-ad-button-hover); transform:translateY(-1px); box-shadow:0 4px 12px rgba(245,158,11,0.4); }
         .status-found .bseas-sp-skip:active { transform:translateY(0) scale(0.98); }
-        .bseas-sp-box.status-none { background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%); border:1px solid #22c55e; box-shadow:0 4px 12px rgba(34,197,94,0.1); }
+        .bseas-sp-box.status-none { background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 100%); border:1px solid #22c55e; box-shadow:0 4px 12px rgba(34,197,94,0.1); box-sizing:border-box; min-height:64px; justify-content:center; }
         .bseas-sp-box.status-err { background:linear-gradient(135deg,#fef2f2 0%,#fee2e2 100%); border:1px solid #ef4444; box-shadow:0 4px 12px rgba(239,68,68,0.1); }
         .bseas-sp-header { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
         .bseas-sp-icon { width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:bold; flex-shrink:0; }
@@ -605,6 +604,7 @@
     let currentGenerationId = 0;
     let progressMarkInitialized = false;
     let lastAdCheckResult = null;
+    let adDetectionNotified = false;
     let latestVersion = null;
     let hasUpdate = false;
     let updateLinkUrl = null;
@@ -636,6 +636,21 @@
         const existing = aiSummaryCache[videoKey];
         const qa = (existing && Array.isArray(existing.qa)) ? existing.qa : [];
         aiSummaryCache[videoKey] = { prompt, summary, qa, ts: Date.now() };
+        GM_setValue('aiSummaryCache', aiSummaryCache);
+    }
+    function overwriteCachedAdAsNone(videoKey) {
+        const entry = aiSummaryCache[videoKey];
+        if (!entry) return;
+        const summary = typeof entry === 'string' ? entry : entry.summary;
+        if (!summary) return;
+        const idx = summary.lastIndexOf('广告时间');
+        const newSummary = idx !== -1 ? (summary.slice(0, idx) + '广告时间[无]（已取消）') : (summary.trimEnd() + '\n\n广告时间[无]（已取消）');
+        if (typeof entry === 'string') {
+            aiSummaryCache[videoKey] = newSummary;
+        } else {
+            entry.summary = newSummary;
+            entry.ts = Date.now();
+        }
         GM_setValue('aiSummaryCache', aiSummaryCache);
     }
     function appendCachedQA(videoKey, q, a) {
@@ -898,6 +913,14 @@
         }
         return lines.slice(0, cutIndex).join('\n').trim();
     }
+    function notifyAdDetected() {
+        if (adDetectionNotified || !adSegments || adSegments.length === 0) return;
+        adDetectionNotified = true;
+        const msg = bseas_auto_skip_ad
+            ? '检测到视频植入广告，已在进度条标黄显示，并将自动跳过'
+            : '检测到视频植入广告，已在进度条标黄显示';
+        showToast(msg, 'success');
+    }
     function initAdSkipMonitor() {
         if (adSkipInterval) clearInterval(adSkipInterval);
         adSkipInterval = setInterval(() => {
@@ -1146,7 +1169,7 @@
         setCachedSummary(currentVideoKey, fullPrompt, summary);
         aiConversationHistory = [{ role: 'user', content: fullPrompt, fullContent: fullPrompt }, { role: 'assistant', content: summary }];
         adSegments = adCheck.segments;
-        if (adSegments.length > 0) { initProgressMark(); initAdSkipMonitor(); }
+        if (adSegments.length > 0) { initProgressMark(); initAdSkipMonitor(); notifyAdDetected(); }
 
         if (adCheck.type === 'error') {
             safeSetInnerHTML(streamEl, markdownToHtml(summary) + '<div style="margin-top:14px;color:#f59e0b;font-size:13px;display:flex;align-items:center;gap:6px;"><div class="bseas-spinner" style="width:14px;height:14px;border-width:2px;"></div>格式校验修正中...</div>');
@@ -1162,7 +1185,7 @@
                 setCachedSummary(currentVideoKey, fullPrompt, summary);
                 aiConversationHistory[1].content = summary;
                 adSegments = adCheck.segments;
-                if (adSegments.length > 0) { initProgressMark(); initAdSkipMonitor(); }
+                if (adSegments.length > 0) { initProgressMark(); initAdSkipMonitor(); notifyAdDetected(); }
             } catch (e) {}
         }
         return summary;
@@ -1180,7 +1203,7 @@
         }
         currentVideoKey = vk;
         allSubtitles = []; currentSubtitleData = null; selectedSubtitleId = null;
-        adSegments = []; hasJumpedAds = {}; lastAdCheckResult = null;
+        adSegments = []; hasJumpedAds = {}; lastAdCheckResult = null; adDetectionNotified = false;
         progressMarkInitialized = false; hotComments = []; subtitleSearchKeyword = '';
         aiConversationHistory = [];
         const existingMark = document.getElementById('bseas-ad-progress-mark');
@@ -1638,7 +1661,7 @@
         const chars = body.reduce((s, i) => s + i.content.length, 0);
         const charsWithTs = getTimestampedTextForAI().length;
         const searchBox = `<div class="bseas-search-box"><input type="text" id="bseas-subtitle-search" class="bseas-search-input" placeholder="搜索字幕内容..." value="${escapeHtml(subtitleSearchKeyword)}">${subtitleSearchKeyword ? `<span class="bseas-search-count">${filtered.length} 条</span>` : ''}</div>`;
-        const stats = `<div class="bseas-stats"><div class="bseas-stat-item"><div class="bseas-stat-label">总条数</div><div class="bseas-stat-value">${cnt}</div></div><div class="bseas-stat-item"><div class="bseas-stat-label">总时长</div><div class="bseas-stat-value">${formatTime(dur)}</div></div><div class="bseas-stat-item ${showPreviewCharsWithTs ? 'bseas-stat-compact' : ''}" id="bseas-chars-toggle" style="cursor:pointer;" title="点击切换"><div class="bseas-stat-label"><span>${showPreviewCharsWithTs ? '总字数（带时间戳）' : '总字数'}</span></div><div class="bseas-stat-value">${showPreviewCharsWithTs ? charsWithTs : chars}</div></div></div>`;
+        const stats = `<div class="bseas-stats"><div class="bseas-stat-item"><div class="bseas-stat-label">总条数</div><div class="bseas-stat-value">${cnt}</div></div><div class="bseas-stat-item"><div class="bseas-stat-label">总时长</div><div class="bseas-stat-value">${formatTime(dur)}</div></div><div class="bseas-stat-item ${showPreviewCharsWithTs ? 'bseas-stat-compact' : ''}" id="bseas-chars-toggle" style="cursor:pointer;" title="点击切换"><div class="bseas-stat-label"><span>${showPreviewCharsWithTs ? '总字数(带时间戳)' : '总字数'}</span></div><div class="bseas-stat-value">${showPreviewCharsWithTs ? charsWithTs : chars}</div></div></div>`;
         safeSetInnerHTML(el, searchBox + stats + `<div id="bseas-subtitle-list-container">${buildSubtitleListHtml(filtered)}</div>`);
         const searchInput = el.querySelector('#bseas-subtitle-search');
         if (searchInput) {
@@ -1666,18 +1689,8 @@
             if (item) {
                 item.classList.toggle('bseas-stat-compact', showPreviewCharsWithTs);
                 const span = item.querySelector('.bseas-stat-label > span');
-                span.textContent = showPreviewCharsWithTs ? '总字数（带时间戳）' : '总字数';
+                span.textContent = showPreviewCharsWithTs ? '总字数(带时间戳)' : '总字数';
                 item.querySelector('.bseas-stat-value').textContent = showPreviewCharsWithTs ? charsWithTs : chars;
-                if (showPreviewCharsWithTs) {
-                    requestAnimationFrame(() => {
-                        const label = item.querySelector('.bseas-stat-label');
-                        const distance = Math.max(0, span.scrollWidth - label.clientWidth);
-                        item.style.setProperty('--marquee-distance', `-${distance}px`);
-                        span.style.animation = 'none';
-                        void span.offsetWidth;
-                        span.style.animation = '';
-                    });
-                }
             }
         });
         bindSubtitleItemClicks(el);
@@ -1720,8 +1733,8 @@
                 const adData = lastAdCheckResult || extractAdSegments(cachedSummary);
                 if (!lastAdCheckResult) lastAdCheckResult = adData;
                 adSegments = adData.segments;
-                if (adSegments.length > 0) initProgressMark();
-                if (adData.type === 'has_ad' && adSegments.length > 0) html += `<div class="bseas-sp-box status-found"><div class="bseas-sp-header-bar"><svg viewBox="0 0 1024 1024" width="22" height="22" style="vertical-align:-5px;margin-right:8px;"><path d="M570.7264 870.1952l1.0752-0.9216a35.2256 35.2256 0 0 1-35.2256-35.2256v-158.1568l-1.2288 0.1024c-44.4928 3.9424-88.576 10.9568-132.096 21.1456-54.5792 12.9024-104.96 30.208-149.7088 51.456a502.9888 502.9888 0 0 0-138.1376 95.744l-3.9424 4.1472-0.1024 0.1024c-8.704 9.216-18.5344 19.8144-31.488 19.8144a28.8768 28.8768 0 0 1-21.4528-8.5504 27.5456 27.5456 0 0 1-7.168-21.248c0.512-8.0896 1.5872-16.128 3.328-24.0128v-0.4096l0.5632-2.6624v-0.2048c2.3552-14.2336 12.3392-66.048 43.7248-136.6016a617.984 617.984 0 0 1 73.6256-124.8256 546.304 546.304 0 0 1 125.952-119.296c10.7008-7.9872 107.6736-78.2336 237.2096-100.4544l0.8704-0.1536V188.8256a35.2768 35.2768 0 0 1 58.624-26.4192l366.1824 322.048a35.4304 35.4304 0 0 1 0.1024 52.9408l-366.2336 323.072a35.4816 35.4816 0 0 1-23.3984 8.8064l1.0752 1.1264-2.1504-0.2048z" fill="#ffffff"></path></svg>检测到视频植入广告</div><div class="bseas-sp-body"><div class="bseas-sp-msg">${bseas_auto_skip_ad ? '进度条已标黄提示，将自动跳过' : '进度条已标黄提示，自动跳过已关闭'}</div><div class="bseas-sp-action-row"><span class="bseas-sp-badge">${adSegments[0].startStr} - ${adSegments[0].endStr}</span><button class="bseas-sp-skip" data-end="${adSegments[0].end}">立即跳过<svg viewBox="0 0 1024 1024" width="14" height="14" style="vertical-align:-2px;margin-left:4px;"><path d="M276.755 942.936c28.497 29.315 74.739 29.315 103.307 0l367.236-378.011c28.483-29.367 28.483-76.982 0-106.291l-367.236-377.997c-28.562-29.367-74.806-29.367-103.307 0-28.546 29.325-28.546 76.929 0 106.304l315.6 324.841-315.599 324.803c-28.545 29.367-28.544 76.973 0 106.356l0 0z" fill="#ffffff"></path></svg></button></div></div></div>`;
+                if (adSegments.length > 0) { initProgressMark(); notifyAdDetected(); }
+                if (adData.type === 'has_ad' && adSegments.length > 0) html += `<div class="bseas-sp-box status-found"><div class="bseas-sp-header"><span class="bseas-sp-title">${bseas_auto_skip_ad ? '广告已标记并将自动跳过' : '广告已标记'}</span><button class="bseas-sp-cancel" title="如果误判请点击此处">取消</button><button class="bseas-sp-skip" data-end="${adSegments[0].end}" title="广告时间 ${adSegments[0].startStr} - ${adSegments[0].endStr}">立即跳过</button></div></div>`;
                 else if (adData.type === 'none') html += `<div class="bseas-sp-box status-none"><div class="bseas-sp-header"><span class="bseas-sp-icon">✓</span><span class="bseas-sp-title">未检测到视频植入广告</span></div></div>`;
                 else html += `<div class="bseas-sp-box status-err"><div class="bseas-sp-header"><span class="bseas-sp-icon">⚠</span><span class="bseas-sp-title">广告时间段格式解析异常</span></div></div>`;
                 const displaySummary = stripAdLine(cachedSummary);
@@ -1756,7 +1769,7 @@
 
             abortCurrentRequest();
             if (aiSummaryCache[currentVideoKey]) { delete aiSummaryCache[currentVideoKey]; aiConversationHistory = []; GM_setValue('aiSummaryCache', aiSummaryCache); }
-            lastAdCheckResult = null;
+            lastAdCheckResult = null; adDetectionNotified = false;
             isGeneratingAI = true;
             const myGenerationId = ++currentGenerationId;
             const genBtn = document.getElementById('bseas-generate-btn');
@@ -1804,6 +1817,17 @@
             }
         });
         el.querySelector('.bseas-sp-skip')?.addEventListener('click', e => { e.stopPropagation(); seekToTime(parseFloat(e.currentTarget.dataset.end)); });
+        el.querySelector('.bseas-sp-cancel')?.addEventListener('click', e => {
+            e.stopPropagation();
+            adSegments = [];
+            lastAdCheckResult = { type: 'none', segments: [] };
+            overwriteCachedAdAsNone(currentVideoKey);
+            progressMarkInitialized = false;
+            const existingMark = document.getElementById('bseas-ad-progress-mark');
+            if (existingMark) existingMark.remove();
+            showToast('✓ 已取消广告标记', 'success');
+            renderAITab(el);
+        });
         const fBtn = document.getElementById('bseas-followup-btn');
         const fInput = document.getElementById('bseas-followup-input');
         if (fBtn && fInput) {
@@ -2160,7 +2184,7 @@
         currentGenerationId++;
         isGeneratingAI = false;
         progressMarkInitialized = false;
-        lastAdCheckResult = null;
+        lastAdCheckResult = null; adDetectionNotified = false;
         currentVideoKey = null;
         currentAid = null;
         hotComments = [];
