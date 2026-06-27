@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.1.0]
+
+### Added
+- 广告关键词列表扩增
+- 新增省 Tokens 模式。通过压缩提示词、由系统进行提前广告检测（通过常见广告关键词匹配，因此会大幅降低检测精度）、压缩结果、限制评论数等方式实现，需要在设置中手动启用
+- 新增 AI 评价功能，让 AI 对视频内容进行评价。需要在设置中手动启用
+
+### Changed
+- 提示词优化
+- 设置页引导文本优化
+
 ## [2.0.2]
 
 ### Added
