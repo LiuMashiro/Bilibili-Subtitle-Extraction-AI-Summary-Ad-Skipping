@@ -6,7 +6,7 @@
 实现字幕提取、AI内容总结（并可追问）、**植入广告自动识别自动跳过**，并依据评论区热门评论进行舆情分析。
 > 如果您不愿意使用 API ，也可以关闭 API 功能，通过一键复制提示词实现问 AI 。
 
-![image.png](https://scriptcat.org/api/v2/resource/image/sSQxkoGP5ao5HhDR)
+![image.png](https://scriptcat.org/api/v2/resource/image/vPFoZ1euhUoa4vnv)
 
 
 ## 主要功能
