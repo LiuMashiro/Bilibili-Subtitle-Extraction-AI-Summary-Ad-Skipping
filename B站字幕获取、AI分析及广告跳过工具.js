@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.0.2
+// @version      2.1.0
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -40,12 +40,12 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.0.2';
+    const SCRIPT_VERSION = '2.1.0';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
     const CHANGELOG_RAW_URL = 'https://raw.githubusercontent.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/main/CHANGELOG.md';
-    const AD_BRAND_LIST = ['转转', '追觅', '神奇小鹿', '妙界', '拼多多', '加速器', '得物', '萌牙家'];
+    const AD_KEYWORD_LIST = ['转转', '追觅', '神奇小鹿', '妙界', '拼多多', '加速器', '得物', '萌牙家', '夏凉被', '小冰被', '欧莱雅', '海蓝之谜', '洗发水', '防脱发产品', '洗面奶', '扫地机器人', '蓝盒子', '黑白调', '西昊', '按摩仪', '笑容加', '牙刷', '618', '双十一', '云鲸', '徕芬', 'UWANT 友望', '慕思', '珀莱雅', '鱼油'];
     const AD_MARK_COLOR = 'rgba(255, 193, 7, 0.6)';
     const AD_CHECK_INTERVAL_MS = 2000;
     const AUTO_FETCH_DELAY_MS = 1500;
@@ -108,6 +108,8 @@
     let bseas_max_preview_subtitles = GM_getValue('bseas_max_preview_subtitles', 200);
     let bseas_confirm_chars = GM_getValue('bseas_confirm_chars', 20000);
     let bseas_confirm_enabled = GM_getValue('bseas_confirm_enabled', true);
+    let bseas_ai_evaluation = GM_getValue('bseas_ai_evaluation', false);
+    let bseas_save_tokens = GM_getValue('bseas_save_tokens', false);
 
     // ===================== 3. AI 提示词 =====================
     function getFormatRules() {
@@ -133,8 +135,30 @@
  ${latexBan}`;
     }
 
-    function getAISummaryPrompt(hasSubtitle, includeFormatRules = true) {
+    function getAISummaryPrompt(hasSubtitle, includeFormatRules = true, adHint = false) {
+        const saveTokens = bseas_save_tokens;
+        const aiEvaluation = bseas_ai_evaluation;
+
+        if (saveTokens) {
+            const aiEvalMini = aiEvaluation ? '\n\n## AI评价\n客观、理性、一针见血地评价本视频（两句话以内）。默认内容事实属实，' : '';
+            const opinionMini = bseas_opinion_analysis ? '\n\n## 舆论分析\n极简提炼热门评论整体观点和氛围，无评论跳过' : '';
+            if (!hasSubtitle) {
+                return `根据视频标题、简介、热门评论（如有）极简进行舆论分析，剔除一切修饰废话。${aiEvalMini}\n\n末尾严格输出一行：广告时间[无]`;
+            }
+            let p = `## 内容总结 从字幕极简总结视频核心内容，剔除一切修饰废话。（确保第一行为“## 视频总结”）`;
+            p += opinionMini;
+            p += aiEvalMini;
+            if (adHint) {
+                p += `\n【重要！本视频很可能含有广告，请注意按要求输出广告时间！】`;
+                p += `\n字幕含时间戳[MM:SS - MM:SS]。识别中间插入的最长一段广告，最后末尾输出一行：广告时间[MM:SS - MM:SS]（无广告则输出 广告时间[无]）。`;
+            } else {
+                p += `\n最后末尾输出一行：广告时间[无]。`;
+            }
+            return p;
+        }
+
         const formatRules = includeFormatRules ? getFormatRules() + '\n\n' : '';
+        const adHintLine = adHint ? '\n【重要！重要！重要！本视频很可能含有广告，请注意按要求输出广告时间！】【重要！重要！重要！本视频很可能含有广告，请注意按要求输出广告时间！】【重要！重要！重要！本视频很可能含有广告，请注意按要求输出广告时间！】' : '';
         if (!hasSubtitle) {
             return `${formatRules}注意：当前视频未提供字幕数据。请不要进行视频内容总结，而是根据提供的视频标题、简介以及热门评论区数据（如果有），直接进行舆论分析。
 如果没有提供评论数据，则说明无法进行深度的舆论分析，可以仅分析标题与简介的倾向。
@@ -144,7 +168,7 @@
 - 提炼评论区或标题简介的1-N个主要观点方向，简明概括每个方向的核心立场，标注情感倾向（正面/负面/中性/混合）和大约占比。
 - 如有高赞代表性观点，可简要引用（无需标注用户名）
 - 一句话概括整体氛围
-
+${aiEvaluation ? '---\n\n## AI评价\n对视频做出客观、理性、简洁、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、可以反对），但言语保持克制。。考虑到信息滞后，请默认内容事实属实，不质疑事实真实性。\n' : ''}
 标注音符♪符号的是背景音乐/主人物唱歌。
 
 最后，由于没有视频内容，请严格在末尾回复：
@@ -158,11 +182,11 @@
             case 'minimal': summaryWord = '极简'; overviewWord = '极简'; listWord = '极简地分点列出核心要点（剔除一切修饰性废话）'; break;
             default: summaryWord = '简洁'; overviewWord = '简明'; listWord = '精简地分点列出核心结论和关键信息（剔除修饰性废话）'; break;
         }
-        return `${formatRules}注意：请不要在总结中提及视频中的任何广告植入、商业推广等内容，只聚焦核心内容。
-已知以下品牌均属于广告范畴（包含但不限于）：${AD_BRAND_LIST.join('、')}。
+        return `${formatRules}注意：请不要在总结中提及视频中的任何广告植入、商业推广等内容，只聚焦核心内容。${adHintLine}
+已知以下关键词均属于广告范畴（包含但不限于）：${AD_KEYWORD_LIST.join('、')}。
 字幕包含时间戳（[MM:SS.ms]），但在总结内容中请严格剔除时间戳，只保留通顺的文字。字幕为智能识别，可能包含错误。
 
-请根据字幕内容，生成一份【${summaryWord}】的视频总结：
+请根据字幕内容，生成一份【${summaryWord}】的视频总结（确保第一行为“## 视频总结”）：
 1. ${overviewWord}概括视频核心主题和整体概述。
 2. ${listWord}。
 最多使用"###"三个井号。
@@ -184,7 +208,7 @@
 - 如有高赞代表性观点，可简要引用（无需标注用户名）
 - 一句话概括评论区整体氛围
 如果没有提供评论数据，则跳过此部分，不输出"---"和"## 舆论分析"。
-
+${aiEvaluation ? '\n无论是否输出舆论分析，在其后使用分割线"---"隔开，输出AI评价：\n## AI评价\n对视频做出客观、理性、简洁、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、可以反对），但言语保持克制。考虑到信息滞后，请默认内容事实属实，不质疑事实真实性。\n' : ''}
 标注音符符号的是背景音乐/主人物唱歌。
 
 识别中间插入的广告。在全文的最后末尾列出"广告时间"部分，支持以下两种格式：
@@ -196,7 +220,7 @@
 规则：
 - 如果视频中没有广告，请严格回复：广告时间[无]
 - 如果有多段中间插入的广告，取最长的一段。
-- <5s的广告时间忽略不计。
+- <5s的广告时间，或者整个视频都是广告，则忽略不计。
 - 只包含分钟和秒，禁止任何其他多余文字、符号或标点。
 - "-"左右包含空格
 - 超长视频允许分钟数值大于60，如[70:00 - 75:00]。禁止小时位。禁止分秒毫秒位。`;
@@ -667,7 +691,7 @@
     function formatTimeWithMs(s) { const m = Math.floor(s / 60), sec = Math.floor(s % 60), ms = Math.floor((s % 1) * 100); return `${m}:${sec.toString().padStart(2,'0')}.${ms.toString().padStart(2,'0')}`; }
     function formatTimeForSRT(s) { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60), ms = Math.floor((s % 1) * 1000); return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')},${String(ms).padStart(3,'0')}`; }
     function parseAdTime(str) { str = str.trim(); const m = str.match(/^(\d+):(\d{2})$/); return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null; }
-    function formatCommentsForAI() { return hotComments.length ? hotComments.map(c => `${c.content.length > 200 ? c.content.slice(0,200) + '...' : c.content} ${c.like}`).join('\n') : ''; }
+    function formatCommentsForAI() { return hotComments.length ? hotComments.map(c => `“${c.content.length > 200 ? c.content.slice(0,200) + '...' : c.content}” ${c.like}`).join('\n') : ''; }
     function showToast(msg, type = '') {
         let el = document.querySelector('.bseas-toast');
         if (!el) { el = document.createElement('div'); el.className = 'bseas-toast'; document.body.appendChild(el); }
@@ -977,7 +1001,7 @@
         if (!aid) { try { aid = unsafeWindow.__INITIAL_STATE__?.aid; } catch (e) {} }
         if (!aid) return [];
         try {
-            const r = await fetch(`https://api.bilibili.com/x/v2/reply/main?type=1&oid=${aid}&mode=3&next=0&ps=${bseas_opinion_comments_count}`, { credentials: 'include' });
+            const r = await fetch(`https://api.bilibili.com/x/v2/reply/main?type=1&oid=${aid}&mode=3&next=0&ps=${bseas_save_tokens ? 10 : bseas_opinion_comments_count}`, { credentials: 'include' });
             const d = await r.json();
             if (d.code !== 0 || !d.data?.replies) return [];
             return d.data.replies.map(r => ({ content: r.content.message, like: r.like }));
@@ -1108,7 +1132,10 @@
         if (contextInfo) contextInfo += '\n';
         const commentsText = (bseas_opinion_analysis && hotComments.length > 0) ? formatCommentsForAI() : '';
         if (commentsText) contextInfo += `===== 热门评论（按热度排序）=====\n${commentsText}\n\n`;
-        return `${getAISummaryPrompt(hasSubtitle, includeFormatRules)}\n\n${contextInfo}${hasSubtitle ? '===== 视频字幕 =====\n' + subtitleText : ''}`;
+        const adHint = hasSubtitle && subtitleContainsAdKeyword();
+        const usePlain = bseas_save_tokens && !adHint;
+        const finalSubtitle = hasSubtitle ? (usePlain ? getPlainSubtitleText() : subtitleText) : '';
+        return `${getAISummaryPrompt(hasSubtitle, includeFormatRules, adHint)}\n\n${contextInfo}${hasSubtitle ? '===== 视频字幕 =====\n' + finalSubtitle : ''}`;
     }
     function createThrottledRenderer(el, options) {
         options = options || {};
@@ -1164,6 +1191,7 @@
         let summary = await callAPIStream(messages, text => renderer.update(text));
         renderer.finalize(summary);
         let adCheck = extractAdSegments(summary);
+        if (bseas_save_tokens && !subtitleContainsAdKeyword()) adCheck = { type: 'none', segments: [] };
         lastAdCheckResult = adCheck;
 
         setCachedSummary(currentVideoKey, fullPrompt, summary);
@@ -1211,7 +1239,7 @@
         setLoadingState(true);
         try {
             allSubtitles = await fetchBilibiliSubtitles();
-            const commentPromise = fetchHotComments();
+            const commentPromise = bseas_opinion_analysis ? fetchHotComments() : Promise.resolve([]);
             if (allSubtitles.length > 0) await loadSubtitle(allSubtitles[0]);
             hotComments = await commentPromise;
         } catch (e) {}
@@ -1455,13 +1483,17 @@
         bseas_auto_skip_ad = document.getElementById('bseas-s-auto-skip').checked;
         bseas_auto_open_panel = document.getElementById('bseas-s-auto-open').checked;
         bseas_auto_open_tab = document.getElementById('bseas-s-auto-tab').value;
-        bseas_detail_level = document.getElementById('bseas-s-detail').value;
+        bseas_save_tokens = document.getElementById('bseas-s-save-tokens').checked;
+        if (!bseas_save_tokens) {
+            bseas_detail_level = document.getElementById('bseas-s-detail').value;
+            bseas_opinion_comments_count = parseInt(document.getElementById('bseas-s-opinion-count').value) || 30;
+        }
         bseas_disable_api = document.getElementById('bseas-s-disable-api').checked;
         bseas_panel_pos_preset = document.getElementById('bseas-s-pos-preset').value;
-        bseas_opinion_comments_count = parseInt(document.getElementById('bseas-s-opinion-count').value) || 30;
         bseas_max_preview_subtitles = parseInt(document.getElementById('bseas-s-max-preview').value) || 200;
         bseas_confirm_enabled = document.getElementById('bseas-s-confirm-enable').checked;
         bseas_confirm_chars = parseInt(document.getElementById('bseas-s-confirm-chars').value) || 20000;
+        bseas_ai_evaluation = document.getElementById('bseas-s-ai-evaluation').checked;
         GM_setValue('bseas_platform', bseas_platform);
         GM_setValue('bseas_api_url', bseas_api_url);
         GM_setValue('bseas_api_key_' + bseas_platform, bseas_api_key);
@@ -1478,6 +1510,8 @@
         GM_setValue('bseas_max_preview_subtitles', bseas_max_preview_subtitles);
         GM_setValue('bseas_confirm_enabled', bseas_confirm_enabled);
         GM_setValue('bseas_confirm_chars', bseas_confirm_chars);
+        GM_setValue('bseas_ai_evaluation', bseas_ai_evaluation);
+        GM_setValue('bseas_save_tokens', bseas_save_tokens);
         GM_deleteValue('bseas_panel_position');
     }
     function bindEvents(c) {
@@ -1566,6 +1600,15 @@
         if (!currentSubtitleData?.body) return '';
         return currentSubtitleData.body.map(it => `[${formatTime(it.from)} - ${formatTime(it.to)}] ${it.content}`).join('\n');
     }
+    function getPlainSubtitleText() {
+        if (!currentSubtitleData?.body) return '';
+        return currentSubtitleData.body.map(it => it.content).join('\n');
+    }
+    function subtitleContainsAdKeyword() {
+        if (!currentSubtitleData?.body) return false;
+        const text = currentSubtitleData.body.map(it => it.content).join('\n');
+        return AD_KEYWORD_LIST.some(keyword => keyword.split(/\s+/).filter(Boolean).some(tok => text.includes(tok)));
+    }
 
     // ===================== 19. UI 状态更新 =====================
     function updateDotState() {
@@ -1596,7 +1639,7 @@
             }
         }
         if (currentSubtitleData?.body) {
-            if (info) info.textContent = `成功解析 ${currentSubtitleData.body.length} 条字幕 · ${hotComments.length} 条评论`;
+            if (info) info.textContent = `成功解析 ${currentSubtitleData.body.length} 条字幕 · ${hotComments.length} 条评论${bseas_save_tokens ? ' · 省 Tokens' : ''}`;
             if (copyBtn) copyBtn.disabled = false;
             if (dlTxtBtn) dlTxtBtn.disabled = false;
             if (dlSrtBtn) dlSrtBtn.disabled = false;
@@ -1930,6 +1973,18 @@
                 <input type="text" class="bseas-settings-input bseas-password-mask" id="bseas-s-key" value="${escapeHtml(currentPlatformKey)}" placeholder="输入 API Key...">
                 <div class="bseas-settings-hint">本程序不会上传 API Key。请勿泄露您的 API Key！</div>
             </div>
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">省 Tokens 模式（不推荐）</div>
+                    <div class="bseas-settings-row-desc">通过压缩提示词、提前检测常见广告、压缩结果实现，将降低生成质量和广告识别精度，不建议开启</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-save-tokens" ${bseas_save_tokens ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -1999,8 +2054,8 @@
         <div class="bseas-settings-card">
             <div class="bseas-settings-row inline">
                 <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">舆论分析（热门评论）</div>
-                    <div class="bseas-settings-row-desc">开启后 AI 分析将获取热门评论并包含对评论的舆论倾向分析。</div>
+                    <div class="bseas-settings-row-label">舆论分析</div>
+                    <div class="bseas-settings-row-desc">开启后 AI 将根据评论对评论区进行舆论分析</div>
                 </div>
                 <div class="bseas-settings-row-action">
                     <label class="bseas-toggle">
@@ -2013,6 +2068,24 @@
                 <label class="bseas-settings-stack-label">获取评论数上限</label>
                 <input type="number" class="bseas-settings-input" id="bseas-s-opinion-count" value="${bseas_opinion_comments_count}" min="0" max="100">
                 <div class="bseas-settings-hint">获取的评论数可能会小于但不会超过此限制</div>
+            </div>
+        </div>
+    </section>
+
+    <section class="bseas-settings-section">
+        <div class="bseas-settings-section-title">AI 评价</div>
+        <div class="bseas-settings-card">
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">AI评价</div>
+                    <div class="bseas-settings-row-desc">AI将在总结后给出自己的评价，仅供参考</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-ai-evaluation" ${bseas_ai_evaluation ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
+                </div>
             </div>
         </div>
     </section>
@@ -2132,6 +2205,63 @@
         if (confirmEnableCheckbox) {
             toggleConfirmThreshold(confirmEnableCheckbox.checked);
             confirmEnableCheckbox.addEventListener('change', () => toggleConfirmThreshold(confirmEnableCheckbox.checked));
+        }
+        const saveTokensCheckbox = document.getElementById('bseas-s-save-tokens');
+        const detailSelect = document.getElementById('bseas-s-detail');
+        const opinionCountInput = document.getElementById('bseas-s-opinion-count');
+        // 舆论分析开关
+        const opinionCheckbox = document.getElementById('bseas-s-opinion');
+        function opinionCountShouldBeDisabled() {
+            const saveTokensOn = saveTokensCheckbox && saveTokensCheckbox.checked;
+            const opinionOff = !opinionCheckbox || !opinionCheckbox.checked;
+            return saveTokensOn || opinionOff;
+        }
+        function applyOpinionCountDisabled() {
+            if (!opinionCountInput) return;
+            const disabled = opinionCountShouldBeDisabled();
+            opinionCountInput.disabled = disabled;
+            if (disabled) opinionCountInput.classList.add('disabled-setting');
+            else opinionCountInput.classList.remove('disabled-setting');
+        }
+        function toggleDetailForSaveTokens(saveTokens) {
+            if (saveTokens) {
+                if (detailSelect && !detailSelect.disabled) {
+                    bseas_detail_level = detailSelect.value;
+                }
+                if (opinionCountInput && !opinionCountInput.disabled) {
+                    bseas_opinion_comments_count = parseInt(opinionCountInput.value) || 30;
+                }
+            }
+            if (detailSelect) {
+                if (saveTokens) {
+                    detailSelect.value = 'minimal';
+                    detailSelect.disabled = true;
+                    detailSelect.classList.add('disabled-setting');
+                } else {
+                    detailSelect.value = bseas_detail_level;
+                    detailSelect.disabled = false;
+                    detailSelect.classList.remove('disabled-setting');
+                }
+            }
+            if (opinionCountInput) {
+                if (saveTokens) {
+                    opinionCountInput.value = 10;
+                    opinionCountInput.disabled = true;
+                    opinionCountInput.classList.add('disabled-setting');
+                } else {
+                    opinionCountInput.value = bseas_opinion_comments_count;
+                    applyOpinionCountDisabled();
+                }
+            }
+        }
+        if (saveTokensCheckbox) {
+            toggleDetailForSaveTokens(saveTokensCheckbox.checked);
+            saveTokensCheckbox.addEventListener('change', () => toggleDetailForSaveTokens(saveTokensCheckbox.checked));
+        }
+        if (opinionCheckbox) {
+            opinionCheckbox.addEventListener('change', () => {
+                if (!saveTokensCheckbox || !saveTokensCheckbox.checked) applyOpinionCountDisabled();
+            });
         }
         pSelect.addEventListener('change', () => {
             const currentKeyInput = document.getElementById('bseas-s-key');
