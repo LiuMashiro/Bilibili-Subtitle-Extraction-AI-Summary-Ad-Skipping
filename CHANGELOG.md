@@ -1,6 +1,12 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.1.1]
+
+### Added
+- AI 可能有误请核查的提示
+- 手机端仓库超链接
+
 ## [2.1.0]
 
 ### Added
