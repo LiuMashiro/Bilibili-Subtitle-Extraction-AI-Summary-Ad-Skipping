@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 ## [2.2.0]
 
 ### Added
-- **AI修正字幕**：基于 AI 一键修正当前选中字幕的识别错误并储存视频持久化存储
+- **AI修正字幕**：可以选择由 AI 一键修正当前选中字幕的识别错误并存储为新的字幕
 - 手动编辑字幕
 
 ### Changed
