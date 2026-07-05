@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.2.0]
+
+### Added
+- **AI修正字幕**：基于 AI 一键修正当前选中字幕的识别错误并储存视频持久化存储
+- 手动编辑字幕
+
+### Changed
+- 弱化更新检测提醒：设置页新增"总是/弱化/禁用"，默认弱化，弱化模式仅重大更新且每7天提醒一次
+- 字幕搜索新增搜索图标、匹配数量和一键清空
+- 优化提示词文本
+- 视觉微调
+
 ## [2.1.1]
 
 ### Added
