@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.2.2
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -30,6 +30,7 @@
 // @connect      *
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js
+// @require      https://cdn.jsdelivr.net/npm/pinyin-pro@3.28.1/dist/index.js
 // @resource     KATEX_CSS https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
 // @run-at       document-idle
 // @downloadURL  https://update.greasyfork.org/scripts/579482/B%E7%AB%99%E5%AD%97%E5%B9%95%E8%8E%B7%E5%8F%96%E3%80%81AI%E5%88%86%E6%9E%90%E5%8F%8A%E5%B9%BF%E5%91%8A%E8%B7%B3%E8%BF%87%E5%B7%A5%E5%85%B7.user.js
@@ -40,7 +41,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.2.0';
+    const SCRIPT_VERSION = '2.2.2';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -658,6 +659,8 @@
     let currentAbortController = null;
     let currentGMXHR = null;
     let subtitleSearchKeyword = '';
+    let expandedSearch = false;
+    let currentPreviewLimit = 0;
     let _documentClickHandler = null;
 
     // ===================== 7. 日志工具 =====================
@@ -730,6 +733,19 @@
     function getVideoTitle() { const h1 = document.querySelector('h1.video-title'); if (!h1) return ''; return h1.dataset.title || h1.getAttribute('title') || h1.textContent.trim(); }
     function getVideoDescription() { const el = document.querySelector('.desc-info-text'); return el ? el.textContent.trim() : ''; }
     function getVideoTags() { const els = document.querySelectorAll('.tag-link .tag-name'); return els.length ? Array.from(els).map(t => t.textContent.trim()) : []; }
+    function getUpName() {
+        const el = document.querySelector('.up-name');
+        if (el) return el.textContent.trim();
+        return '';
+    }
+    function getVideoPartNumber() {
+        const url = window.location.href;
+        const match = url.match(/[?&]p=(\d+)/);
+        return match ? parseInt(match[1], 10) : null;
+    }
+    function getCurrentSubtitleLanguage() {
+        return currentSubtitleData?.lan_doc || '';
+    }
     function sanitizeFilename(name) { return (name || 'subtitle').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 100); }
     function compareVersions(v1, v2) {
         const toNum = s => { const n = parseInt(s, 10); return isNaN(n) ? 0 : n; };
@@ -1188,13 +1204,20 @@
         if (videoTitle) contextInfo += `视频标题：${videoTitle}\n`;
         if (videoDesc) contextInfo += `视频简介：${videoDesc}\n`;
         if (videoTags.length > 0) contextInfo += `视频标签：${videoTags.join(', ')}\n`;
+        const upName = getUpName();
+        const partNum = getVideoPartNumber();
+        const subLang = getCurrentSubtitleLanguage();
+        if (upName) contextInfo += `UP主：${upName}\n`;
+        if (partNum !== null) contextInfo += `当前分P：第${partNum}P\n`;
+        if (subLang) contextInfo += `字幕语言：${subLang}\n`;
         if (contextInfo) contextInfo += '\n';
         const commentsText = (bseas_opinion_analysis && hotComments.length > 0) ? formatCommentsForAI() : '';
         if (commentsText) contextInfo += `===== 热门评论（按热度排序）=====\n${commentsText}\n\n`;
         const adHint = hasSubtitle && subtitleContainsAdKeyword();
         const usePlain = bseas_save_tokens && !adHint;
         const finalSubtitle = hasSubtitle ? (usePlain ? getPlainSubtitleText() : subtitleText) : '';
-        return `${getAISummaryPrompt(hasSubtitle, includeFormatRules, adHint)}\n\n${contextInfo}${hasSubtitle ? '===== 视频字幕 =====\n' + finalSubtitle : ''}`;
+        const toolIdentity = '你是哔哩哔哩辅助工具的AI分析模块，正在分析B站视频字幕内容。';
+        return `${toolIdentity}\n\n${getAISummaryPrompt(hasSubtitle, includeFormatRules, adHint)}\n\n${contextInfo}${hasSubtitle ? '===== 视频字幕 =====\n' + finalSubtitle : ''}`;
     }
     function buildCorrectSubtitlePrompt() {
         const title = getVideoTitle();
@@ -1202,6 +1225,12 @@
         let ctx = '';
         if (title) ctx += `视频标题：${title}\n`;
         if (desc) ctx += `视频简介：${desc}\n`;
+        const upName = getUpName();
+        const partNum = getVideoPartNumber();
+        const subLang = getCurrentSubtitleLanguage();
+        if (upName) ctx += `UP主：${upName}\n`;
+        if (partNum !== null) ctx += `当前分P：第${partNum}P\n`;
+        if (subLang) ctx += `字幕语言：${subLang}\n`;
         const curBody = currentSubtitleData?.body || [];
         const curJson = JSON.stringify(curBody.map(it => ({ from: it.from, to: it.to, content: it.content })));
         let otherTracks = '';
@@ -1210,7 +1239,7 @@
             if (!s.body?.length) continue;
             otherTracks += `\n--- 字幕轨道(${s.lan_doc}) ---\n` + s.body.map(it => `[${formatTime(it.from)} - ${formatTime(it.to)}] ${it.content}`).join('\n');
         }
-        return `你是字幕修正助手。请结合视频内容与上下文，修正"当前选中字幕"中的识别错误（错别字、断句、专有名词等），进行推测、润色、优化、修正。
+        return `你是哔哩哔哩辅助工具的字幕修正模块。请结合视频内容与上下文，修正"当前选中字幕"中的识别错误（错别字、断句、专有名词等），进行推测、润色、优化、修正。
 ${ctx}
 ===== 当前选中字幕（JSON 数组，from/to 为秒数即时间戳）=====
 ${curJson}
@@ -1357,7 +1386,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         currentVideoKey = vk;
         allSubtitles = []; currentSubtitleData = null; selectedSubtitleId = null;
         adSegments = []; hasJumpedAds = {}; lastAdCheckResult = null; adDetectionNotified = false;
-        progressMarkInitialized = false; hotComments = []; subtitleSearchKeyword = '';
+        progressMarkInitialized = false; hotComments = []; subtitleSearchKeyword = ''; currentPreviewLimit = 0; expandedSearch = false;
         aiConversationHistory = [];
         const existingMark = document.getElementById('bseas-ad-progress-mark');
         if (existingMark) existingMark.remove();
@@ -1382,10 +1411,14 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (idx >= 0) { allSubtitles[idx].body = stored.body; allSubtitles[idx].lan_doc = doc; allSubtitles[idx].editMethod = m; return; }
         allSubtitles.unshift({ id: 'ai-corrected', lan_doc: doc, isAI: true, body: stored.body, editMethod: m });
     }
+    let loadSubtitleGeneration = 0;
     async function loadSubtitle(sub) {
         if (!sub) return;
         if (selectedSubtitleId === sub.id && currentSubtitleData?.body?.length > 0) return;
         selectedSubtitleId = sub.id;
+        subtitleSearchKeyword = '';
+        currentPreviewLimit = 0;
+        expandedSearch = false;
         if (autoGenerateTimer) { clearTimeout(autoGenerateTimer); autoGenerateTimer = null; }
         const afterLoad = () => {
             if (bseas_auto_open_panel && !panelVisible) {
@@ -1404,7 +1437,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         };
         if (sub.body?.length > 0) { currentSubtitleData = sub; updateUI(); updateContent(); afterLoad(); return; }
         setLoadingState(true);
+        const thisGen = ++loadSubtitleGeneration;
         sub.body = await fetchSubtitleContent(sub.subtitle_url);
+        if (thisGen !== loadSubtitleGeneration) return;
         currentSubtitleData = sub;
         setLoadingState(false);
         updateUI(); updateContent(); afterLoad();
@@ -1441,6 +1476,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (currentSubtitleData?.id === 'ai-corrected') { showToast('已修正字幕无需重复修正', 'warning'); return; }
         if (bseas_disable_api) { showToast('已禁用API，无法修正', 'warning'); return; }
         if (!bseas_api_key) { showToast('未配置API Key', 'warning'); return; }
+        const correctionText = getTimestampedTextForAI();
+        if (bseas_confirm_enabled && correctionText.length > bseas_confirm_chars) {
+            if (!confirm(`字幕文字量过多（包含时间戳为 ${correctionText.length} 字），调用AI修正可能会消耗较多 Tokens，是否继续？`)) return;
+        }
         isCorrectingSubtitle = true;
         const btn = document.getElementById('bseas-ai-correct-btn');
         const bar = btn?.querySelector('.bseas-correct-progress');
@@ -1473,7 +1512,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     function openSubtitleEditor() {
         if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
-        if (currentSubtitleData?.id === 'ai-corrected') { showToast('已修正字幕无需重复编辑', 'warning'); return; }
         const existing = document.querySelector('.bseas-edit-overlay');
         if (existing) existing.remove();
         const body = currentSubtitleData.body;
@@ -1481,12 +1519,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const overlay = document.createElement('div');
         overlay.className = 'bseas-edit-overlay';
         const entriesHtml = body.map((it, i) => `<div class="bseas-edit-entry"><span class="bseas-edit-ts">${formatTime(it.from)} -> ${formatTime(it.to)}</span><textarea class="bseas-edit-textarea" data-idx="${i}" rows="1">${escapeHtml(it.content || '')}</textarea></div>`).join('');
-        overlay.innerHTML = `<div class="bseas-edit-modal"><div class="bseas-edit-modal-header"><span>编辑字幕 - ${escapeHtml(lanDoc)}（共${body.length}条）</span></div><div class="bseas-edit-modal-body">${entriesHtml}</div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save">保存</button></div></div>`;
+        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal"><div class="bseas-edit-modal-header"><span>编辑字幕 - ${escapeHtml(lanDoc)}（共${body.length}条）</span></div><div class="bseas-edit-modal-body">${entriesHtml}</div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save">保存</button></div></div>`);
         document.body.appendChild(overlay);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-        const escHandler = (e) => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); } };
+        const closeOverlay = () => { overlay.remove(); document.removeEventListener('keydown', escHandler); };
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+        const escHandler = (e) => { if (e.key === 'Escape') closeOverlay(); };
         document.addEventListener('keydown', escHandler);
-        overlay.querySelector('.cancel').addEventListener('click', () => { overlay.remove(); document.removeEventListener('keydown', escHandler); });
+        overlay.querySelector('.cancel').addEventListener('click', closeOverlay);
         overlay.querySelector('.save').addEventListener('click', () => {
             const textareas = overlay.querySelectorAll('.bseas-edit-textarea');
             const editedBody = body.map((it, i) => ({ from: it.from, to: it.to, content: textareas[i] ? textareas[i].value : it.content }));
@@ -1495,8 +1534,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             const corrected = allSubtitles.find(s => s.id === 'ai-corrected');
             if (corrected) loadSubtitle(corrected);
             showToast('字幕编辑已保存', 'success');
-            overlay.remove();
-            document.removeEventListener('keydown', escHandler);
+            closeOverlay();
         });
     }
     let _lastTabIndex = 0;
@@ -1864,10 +1902,19 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                         : `<span class="bseas-tag ${s.isAI ? 'ai' : 'cc'}">${s.isAI ? 'AI' : 'CC'}</span>`;
                     return `<div class="bseas-subtitle-option ${s.id === selectedSubtitleId ? 'active' : ''}" data-id="${escapeHtml(s.id)}">${escapeHtml(s.lan_doc)}${tag}</div>`;
                 }).join('');
-                const showBtns = currentSubtitleData?.body?.length && currentSubtitleData?.id !== 'ai-corrected';
-                const btnsHtml = showBtns
-                    ? `<div class="bseas-correct-btns"><div class="bseas-correct-op edit" id="bseas-edit-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg><span>编辑字幕</span></div><div class="bseas-correct-op${bseas_disable_api ? ' disabled' : ''}" id="bseas-ai-correct-btn"><div class="bseas-correct-progress"></div><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>AI修正字幕</span></div></div>`
-                    : '';
+                const showEditBtn = currentSubtitleData?.body?.length;
+                const showCorrectBtn = currentSubtitleData?.body?.length && currentSubtitleData?.id !== 'ai-corrected';
+                let btnsHtml = '';
+                if (showEditBtn || showCorrectBtn) {
+                    btnsHtml = '<div class="bseas-correct-btns">';
+                    if (showEditBtn) {
+                        btnsHtml += `<div class="bseas-correct-op edit" id="bseas-edit-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg><span>编辑字幕</span></div>`;
+                    }
+                    if (showCorrectBtn) {
+                        btnsHtml += `<div class="bseas-correct-op${bseas_disable_api ? ' disabled' : ''}" id="bseas-ai-correct-btn"><div class="bseas-correct-progress"></div><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>AI修正字幕</span></div>`;
+                    }
+                    btnsHtml += '</div>';
+                }
                 safeSetInnerHTML(sb, optsHtml + btnsHtml);
                 sb.querySelectorAll('.bseas-subtitle-option[data-id]').forEach(o => o.addEventListener('click', (e) => {
                     e.stopPropagation();
@@ -1903,24 +1950,290 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
 
     // ===================== 20. 浏览页渲染 =====================
+    function toHalfWidth(str) {
+        return str.replace(/[\uFF01-\uFF5E\u3000]/g, function(ch) {
+            if (ch === '\u3000') return ' ';
+            return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
+        });
+    }
+    function numberToChinese(num) {
+        if (num === 0) return '零';
+        if (num < 0) return '负' + numberToChinese(-num);
+        const digits = ['零','一','二','三','四','五','六','七','八','九'];
+        const units = [{v:1e8,u:'亿'},{v:1e4,u:'万'},{v:1e3,u:'千'},{v:1e2,u:'百'},{v:10,u:'十'}];
+        let result = '', needZero = false;
+        for (const {v, u} of units) {
+            if (num >= v) {
+                const n = Math.floor(num / v);
+                if (needZero) { result += '零'; needZero = false; }
+                result += (v === 10 && n === 1 && !result) ? u : (numberToChinese(n) + u);
+                num = num % v;
+            } else if (result) {
+                needZero = true;
+            }
+        }
+        if (num > 0) { if (needZero) result += '零'; result += digits[num]; }
+        return result;
+    }
+    function chineseToNumber(str) {
+        const digitMap = {'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'两':2};
+        const unitMap = {'十':10,'百':100,'千':1000,'万':10000,'亿':100000000};
+        let result = 0, current = 0;
+        for (const ch of str) {
+            if (ch in digitMap) {
+                current = digitMap[ch];
+            } else if (ch in unitMap) {
+                if (current === 0) current = 1;
+                if (ch === '万' || ch === '亿') {
+                    result = (result + current) * unitMap[ch];
+                    current = 0;
+                } else {
+                    result += current * unitMap[ch];
+                    current = 0;
+                }
+            }
+        }
+        return result + current;
+    }
+    function isNumberMatch(content, keyword) {
+        if (/^\d+$/.test(keyword)) {
+            const chinese = numberToChinese(parseInt(keyword, 10));
+            if (chinese && content.includes(chinese)) return true;
+        }
+        if (/^[零一二三四五六七八九十百千万亿两]+$/.test(keyword)) {
+            const num = chineseToNumber(keyword);
+            if (!isNaN(num) && num > 0 && content.includes(String(num))) return true;
+        }
+        return false;
+    }
+    function isPinyinMatch(content, keyword) {
+        if (typeof pinyinPro === 'undefined') return false;
+        if (!/^[a-z]+$/.test(keyword)) return false;
+        try {
+            const chineseChars = [...content].filter(ch => /[\u4e00-\u9fff]/.test(ch));
+            if (chineseChars.length === 0) return false;
+            const contentPinyin = pinyinPro.pinyin(chineseChars.join(''), { toneType: 'none' }).split(/\s+/);
+            return contentPinyin.some(py => py === keyword || py.startsWith(keyword));
+        } catch (e) { return false; }
+    }
+    function isHomophoneMatch(content, token) {
+        if (typeof pinyinPro === 'undefined') return false;
+        if (!/[\u4e00-\u9fff]/.test(token)) return false;
+        try {
+            const tokenPy = pinyinPro.pinyin(token, { toneType: 'none' }).trim();
+            if (!tokenPy) return false;
+            const chineseChars = [...content].filter(ch => /[\u4e00-\u9fff]/.test(ch));
+            if (chineseChars.length === 0) return false;
+            const contentPinyin = pinyinPro.pinyin(chineseChars.join(''), { toneType: 'none' }).split(/\s+/);
+            return contentPinyin.some(py => py === tokenPy);
+        } catch (e) { return false; }
+    }
+    function isTimeFormat(str) {
+        return /^\d{1,2}[:：]\d{1,2}([:：]\d{1,2})?$/.test(str.trim());
+    }
+    function normalizeTimePattern(str) {
+        const normalized = str.trim().replace(/：/g, ':');
+        const parts = normalized.split(':').map(p => parseInt(p, 10));
+        if (parts.length === 2) return `${parts[0]}:${parts[1].toString().padStart(2, '0')}`;
+        if (parts.length === 3) { const totalSec = parts[0] * 3600 + parts[1] * 60 + parts[2]; return formatTime(totalSec); }
+        return null;
+    }
+    function isTimeMatch(item, keyword) {
+        if (!isTimeFormat(keyword)) return false;
+        const pattern = normalizeTimePattern(keyword);
+        if (!pattern) return false;
+        const timeStr = formatTime(item.from) + ' ' + formatTime(item.to);
+        return timeStr.includes(pattern);
+    }
+    function tokenizeExpanded(keyword) {
+        const normalized = toHalfWidth(keyword).toLowerCase();
+        const tokens = [];
+        let buffer = '';
+        for (const ch of normalized) {
+            if (/[\u4e00-\u9fff]/.test(ch)) {
+                if (buffer) { tokens.push(buffer); buffer = ''; }
+                tokens.push(ch);
+            } else if (/[a-z0-9:]/.test(ch)) {
+                buffer += ch;
+            } else {
+                if (buffer) { tokens.push(buffer); buffer = ''; }
+            }
+        }
+        if (buffer) tokens.push(buffer);
+        return tokens;
+    }
+    function isExpandedTokenMatch(content, item, token) {
+        if (content.includes(token)) return true;
+        const isChinese = /[\u4e00-\u9fff]/.test(token);
+        const isLatin = /^[a-z0-9]+$/.test(token);
+        if (isChinese) {
+            if (isHomophoneMatch(content, token)) return true;
+            if (isNumberMatch(content, token)) return true;
+        }
+        if (isLatin) {
+            if (isPinyinMatch(content, token)) return true;
+            if (isNumberMatch(content, token)) return true;
+        }
+        if (isTimeMatch(item, token)) return true;
+        return false;
+    }
+    function findHomophoneChars(content, token) {
+        if (typeof pinyinPro === 'undefined') return [];
+        if (!/[\u4e00-\u9fff]/.test(token)) return [];
+        try {
+            const tokenPy = pinyinPro.pinyin(token, { toneType: 'none' }).trim();
+            if (!tokenPy) return [];
+            const chars = [...content];
+            const chineseChars = chars.filter(ch => /[\u4e00-\u9fff]/.test(ch));
+            if (chineseChars.length === 0) return [];
+            const contentPinyin = pinyinPro.pinyin(chineseChars.join(''), { toneType: 'none' }).split(/\s+/);
+            const result = [];
+            for (let i = 0; i < chineseChars.length; i++) {
+                if (contentPinyin[i] === tokenPy) result.push(chineseChars[i]);
+            }
+            return result;
+        } catch (e) { return []; }
+    }
+    function findPinyinChars(content, token) {
+        if (typeof pinyinPro === 'undefined') return [];
+        if (!/^[a-z]+$/.test(token)) return [];
+        try {
+            const chars = [...content];
+            const chineseChars = chars.filter(ch => /[\u4e00-\u9fff]/.test(ch));
+            if (chineseChars.length === 0) return [];
+            const contentPinyin = pinyinPro.pinyin(chineseChars.join(''), { toneType: 'none' }).split(/\s+/);
+            const result = [];
+            for (let i = 0; i < chineseChars.length; i++) {
+                const py = contentPinyin[i];
+                if (py && (py === token || py.startsWith(token))) result.push(chineseChars[i]);
+            }
+            return result;
+        } catch (e) { return []; }
+    }
+    function getNumberHighlightTexts(content, token) {
+        const result = [];
+        if (/^\d+$/.test(token)) {
+            const chinese = numberToChinese(parseInt(token, 10));
+            if (chinese && content.includes(chinese)) result.push(chinese);
+        }
+        if (/^[零一二三四五六七八九十百千万亿两]+$/.test(token)) {
+            const num = chineseToNumber(token);
+            if (!isNaN(num) && num > 0 && content.includes(String(num))) result.push(String(num));
+            const digitMap = {'零':'0','一':'1','二':'2','三':'3','四':'4','五':'5','六':'6','七':'7','八':'8','九':'9','两':'2'};
+            if (token in digitMap && content.includes(digitMap[token])) result.push(digitMap[token]);
+        }
+        return result;
+    }
     function highlightKeyword(text, keyword) {
         if (!keyword) return escapeHtml(text);
-        const escaped = escapeHtml(text);
-        const kwEscaped = escapeHtml(keyword).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return escaped.replace(new RegExp(kwEscaped, 'gi'), m => `<mark>${m}</mark>`);
+        const normalizedText = toHalfWidth(text);
+        if (!expandedSearch) {
+            const keywords = keyword.split(/\s+/).filter(Boolean).map(kw =>
+                toHalfWidth(kw).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            );
+            if (keywords.length === 0) return escapeHtml(normalizedText);
+            const raw = normalizedText.replace(new RegExp(keywords.join('|'), 'gi'), m => `\x00${m}\x01`);
+            return escapeHtml(raw).replace(/\x00/g, '<mark>').replace(/\x01/g, '</mark>');
+        }
+        const tokens = tokenizeExpanded(keyword);
+        const highlightSet = new Set();
+        const lowerContent = normalizedText.toLowerCase();
+        for (const token of tokens) {
+            if (lowerContent.includes(token)) highlightSet.add(token);
+            const isChinese = /[\u4e00-\u9fff]/.test(token);
+            const isLatin = /^[a-z0-9]+$/.test(token);
+            if (isChinese) {
+                findHomophoneChars(lowerContent, token).forEach(h => highlightSet.add(h));
+                getNumberHighlightTexts(lowerContent, token).forEach(h => highlightSet.add(h));
+            }
+            if (isLatin) {
+                findPinyinChars(lowerContent, token).forEach(h => highlightSet.add(h));
+                getNumberHighlightTexts(lowerContent, token).forEach(h => highlightSet.add(h));
+            }
+        }
+        if (highlightSet.size === 0) return escapeHtml(normalizedText);
+        const highlights = Array.from(highlightSet).filter(h => h && h.length > 0).sort((a, b) => b.length - a.length);
+        const escapedHighlights = highlights.map(h => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const raw = normalizedText.replace(new RegExp(escapedHighlights.join('|'), 'gi'), m => `\x00${m}\x01`);
+        return escapeHtml(raw).replace(/\x00/g, '<mark>').replace(/\x01/g, '</mark>');
+    }
+    function highlightTime(item, keyword) {
+        const fromStr = formatTime(item.from);
+        const toStr = formatTime(item.to);
+        let html = `${fromStr} → ${toStr}`;
+        if (!expandedSearch || !keyword) return html;
+        const tokens = tokenizeExpanded(keyword);
+        for (const token of tokens) {
+            if (isTimeFormat(token)) {
+                const pattern = normalizeTimePattern(token);
+                if (pattern) {
+                    const escapedPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    html = html.replace(new RegExp(escapedPattern, 'gi'), m => `<mark>${m}</mark>`);
+                }
+            }
+        }
+        return html;
     }
     function filterSubtitles(body) {
         if (!subtitleSearchKeyword) return body;
-        const kw = subtitleSearchKeyword.toLowerCase();
-        return body.filter(it => it.content.toLowerCase().includes(kw));
+        if (!expandedSearch) {
+            const keywords = subtitleSearchKeyword.split(/\s+/).filter(Boolean).map(kw => toHalfWidth(kw).toLowerCase());
+            if (keywords.length === 0) return body;
+            let source = body.filter(it => !it.content.includes('\u266a') && !it.content.includes('\u266b'));
+            return source.filter(it => {
+                const content = toHalfWidth(it.content).toLowerCase();
+                return keywords.every(kw => content.includes(kw));
+            });
+        }
+        const tokens = tokenizeExpanded(subtitleSearchKeyword);
+        if (tokens.length === 0) return body;
+        return body.filter(it => {
+            const content = toHalfWidth(it.content).toLowerCase();
+            return tokens.some(token => isExpandedTokenMatch(content, it, token));
+        });
     }
     function buildSubtitleListHtml(filtered) {
-        const listHtml = filtered.slice(0, bseas_max_preview_subtitles).map(it => `<div class="bseas-subtitle-item" data-time="${escapeHtml(it.from)}"><div class="bseas-ts">${formatTime(it.from)} → ${formatTime(it.to)}</div><div class="bseas-st">${highlightKeyword(it.content, subtitleSearchKeyword)}</div></div>`).join('');
-        const footer = filtered.length > bseas_max_preview_subtitles ? `<div style="text-align:center;color:var(--bseas-text-muted);padding:14px;font-size:13px;">仅展示了前${bseas_max_preview_subtitles}条，可在设置中更改</div>` : (subtitleSearchKeyword && filtered.length === 0 ? '<div class="bseas-empty">未匹配到字幕</div>' : '');
+        const limit = currentPreviewLimit > 0 ? currentPreviewLimit : bseas_max_preview_subtitles;
+        const listHtml = filtered.slice(0, limit).map(it => `<div class="bseas-subtitle-item" data-time="${escapeHtml(it.from)}"><div class="bseas-ts">${highlightTime(it, subtitleSearchKeyword)}</div><div class="bseas-st">${highlightKeyword(it.content, subtitleSearchKeyword)}</div></div>`).join('');
+        let footer = '';
+        if (filtered.length > limit) {
+            footer = `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-load-more" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">继续加载</span></div>`;
+        } else if (subtitleSearchKeyword && filtered.length === 0) {
+            footer = '<div class="bseas-empty">未匹配到字幕</div>';
+        }
+        if (subtitleSearchKeyword && !expandedSearch) {
+            footer += `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-expand-search" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">扩大搜索</span></div>`;
+        } else if (subtitleSearchKeyword && expandedSearch) {
+            footer += `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-restore-search" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">恢复普通搜索</span></div>`;
+        }
         return listHtml + footer;
     }
     function bindSubtitleItemClicks(container) {
         container.querySelectorAll('.bseas-subtitle-item').forEach(item => item.addEventListener('click', (e) => { e.stopPropagation(); seekToTime(parseFloat(item.dataset.time)); }));
+    }
+    function bindLoadMoreClick(container) {
+        container.querySelector('#bseas-load-more')?.addEventListener('click', () => {
+            currentPreviewLimit = (currentPreviewLimit > 0 ? currentPreviewLimit : bseas_max_preview_subtitles) + bseas_max_preview_subtitles;
+            updatePreviewList();
+        });
+    }
+    function bindExpandSearchClick(container) {
+        container.querySelector('#bseas-expand-search')?.addEventListener('click', () => {
+            expandedSearch = true;
+            currentPreviewLimit = 0;
+            updatePreviewList();
+            scrollToPreviewTop();
+        });
+        container.querySelector('#bseas-restore-search')?.addEventListener('click', () => {
+            expandedSearch = false;
+            currentPreviewLimit = 0;
+            updatePreviewList();
+            scrollToPreviewTop();
+        });
+    }
+    function scrollToPreviewTop() {
+        const content = document.querySelector('.bseas-content');
+        if (content) content.scrollTop = 0;
     }
     function updatePreviewList() {
         const el = document.querySelector('.bseas-content');
@@ -1931,6 +2244,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (listContainer) {
             safeSetInnerHTML(listContainer, buildSubtitleListHtml(filtered));
             bindSubtitleItemClicks(listContainer);
+            bindLoadMoreClick(listContainer);
+            bindExpandSearchClick(listContainer);
         }
         const countEl = el.querySelector('.bseas-search-count');
         if (countEl) {
@@ -1959,6 +2274,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 isComposing = false;
                 clearTimeout(debounceTimer);
                 subtitleSearchKeyword = e.target.value.trim();
+                currentPreviewLimit = 0;
+                expandedSearch = false;
                 updatePreviewList();
             });
             searchInput.addEventListener('input', (e) => {
@@ -1966,12 +2283,16 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 clearTimeout(debounceTimer);
                 debounceTimer = setTimeout(() => {
                     subtitleSearchKeyword = e.target.value.trim();
+                    currentPreviewLimit = 0;
+                    expandedSearch = false;
                     updatePreviewList();
                 }, 200);
             });
         }
         el.querySelector('#bseas-search-clear')?.addEventListener('click', () => {
             subtitleSearchKeyword = '';
+            currentPreviewLimit = 0;
+            expandedSearch = false;
             const si = el.querySelector('#bseas-subtitle-search');
             if (si) si.value = '';
             updatePreviewList();
@@ -1988,6 +2309,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             }
         });
         bindSubtitleItemClicks(el);
+        bindLoadMoreClick(el);
+        bindExpandSearchClick(el);
     }
 
     // ===================== 21. AI 分析页渲染 =====================
@@ -2373,9 +2696,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 </div>
             </div>
             <div class="bseas-settings-row">
-                <label class="bseas-settings-stack-label">浏览页加载字幕数量上限</label>
+                <label class="bseas-settings-stack-label">浏览页单次加载字幕数量上限</label>
                 <input type="number" class="bseas-settings-input" id="bseas-s-max-preview" value="${bseas_max_preview_subtitles}" min="1">
-                <div class="bseas-settings-hint">为避免页面卡顿，浏览页最多渲染此数量的字幕。</div>
+                <div class="bseas-settings-hint">为避免页面卡顿，浏览页单次最多渲染此数量的字幕，点击继续加载可以加载更多字幕。</div>
             </div>
             <div class="bseas-settings-row">
                 <label class="bseas-settings-stack-label">自动更新提醒</label>
@@ -2398,8 +2721,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 <a href="javascript:void(0);" class="bseas-danger-link" id="bseas-factory-reset">清除所有储存并恢复出厂设置</a>
             </div>
             <div style="display:flex; align-items:center; justify-content:center; gap:12px; margin-top:8px; font-size:12px;">
-                <a href="https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-mobile" target="_blank" rel="noopener noreferrer" class="bseas-author-link">体验手机版</a>
-                <span style="color: var(--bseas-text-muted);">|</span>
                 <a href="https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/blob/main/LEGAL.md" target="_blank" rel="noopener noreferrer" class="bseas-disclaimer-link" id="bseas-show-disclaimer">说明</a>
             </div>
         </div>`);
@@ -2591,6 +2912,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         hasJumpedAds = {};
         showRawAIText = false;
         subtitleSearchKeyword = '';
+        currentPreviewLimit = 0;
+        expandedSearch = false;
         const existingMark = document.getElementById('bseas-ad-progress-mark');
         if (existingMark) existingMark.remove();
         updateUI();
