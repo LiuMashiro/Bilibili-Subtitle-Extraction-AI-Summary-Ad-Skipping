@@ -23,7 +23,7 @@
 
 ## 设置
 - 支持高度自定义设置和自定义API。
-![image.png](https://scriptcat.org/api/v2/resource/image/eyFa7E59u7flVdKE)
+![image.png](https://scriptcat.org/api/v2/resource/image/NF7fo7Ukpd6CdlPT)
 
 ## 使用须知
 [点击查看](LEGAL.md "点击查看")
