@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.2.2
+// @version      2.3.0
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -33,15 +33,14 @@
 // @require      https://cdn.jsdelivr.net/npm/pinyin-pro@3.28.1/dist/index.js
 // @resource     KATEX_CSS https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
 // @run-at       document-idle
-// @downloadURL  https://update.greasyfork.org/scripts/579482/B%E7%AB%99%E5%AD%97%E5%B9%95%E8%8E%B7%E5%8F%96%E3%80%81AI%E5%88%86%E6%9E%90%E5%8F%8A%E5%B9%BF%E5%91%8A%E8%B7%B3%E8%BF%87%E5%B7%A5%E5%85%B7.user.js
-// @updateURL    https://update.greasyfork.org/scripts/579482/B%E7%AB%99%E5%AD%97%E5%B9%95%E8%8E%B7%E5%8F%96%E3%80%81AI%E5%88%86%E6%9E%90%E5%8F%8A%E5%B9%BF%E5%91%8A%E8%B7%B3%E8%BF%87%E5%B7%A5%E5%85%B7.meta.js
+// @downloadURL none
 // ==/UserScript==
 
 (function () {
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.2.2';
+    const SCRIPT_VERSION = '2.3.0';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -106,7 +105,8 @@
     const bseas_latex = true;
     let bseas_disable_api = GM_getValue('bseas_disable_api', false);
     let bseas_panel_pos_preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
-    let bseas_max_preview_subtitles = GM_getValue('bseas_max_preview_subtitles', 200);
+    let bseas_max_preview_subtitles = GM_getValue('bseas_max_preview_subtitles', 600);
+    if (bseas_max_preview_subtitles === 200) { bseas_max_preview_subtitles = 600; GM_setValue('bseas_max_preview_subtitles', 600); }
     let bseas_confirm_chars = GM_getValue('bseas_confirm_chars', 20000);
     let bseas_confirm_enabled = GM_getValue('bseas_confirm_enabled', true);
     let bseas_ai_evaluation = GM_getValue('bseas_ai_evaluation', false);
@@ -307,7 +307,7 @@
         .bseas-trigger-btn:hover svg { transform: scale(1.15); }
         .bseas-trigger-btn::after {
             content:''; position:absolute; inset:-2px; border-radius:22px;
-            background: radial-gradient(circle at 30% 20%, rgba(0,174,236,0.18), transparent 60%);
+            background: radial-gradient(circle at var(--bseas-mx, 30%) var(--bseas-my, 20%), rgba(0,174,236,0.18), transparent 60%);
             opacity:0; transition: opacity 0.4s var(--ease-out); pointer-events:none; z-index:-1;
         }
         .bseas-trigger-btn:hover::after { opacity:1; }
@@ -360,15 +360,21 @@
         .bseas-correct-op.edit:hover { border-color:var(--bseas-primary); color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.1); }
         .bseas-correct-op:active { transform:translateY(0); }
         .bseas-correct-op.loading { opacity:0.6; pointer-events:none; }
-        .bseas-correct-op.disabled { opacity:0.45; pointer-events:none; filter:grayscale(60%); }
+        .bseas-correct-op.disabled { opacity:0.45; filter:grayscale(60%); cursor:not-allowed; }
         .bseas-correct-progress { position:absolute; left:0; top:0; height:100%; width:0%; background:rgba(255,255,255,0.25); pointer-events:none; }
         .bseas-edit-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:100000; display:flex; align-items:center; justify-content:center; animation:bseas-fadein 0.2s ease; }
-        .bseas-edit-modal { background:white; border-radius:12px; width:90%; max-width:640px; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.2); }
-        .bseas-edit-modal-header { padding:14px 20px; font-size:15px; font-weight:600; color:var(--bseas-text); border-bottom:1px solid var(--bseas-border); display:flex; align-items:center; justify-content:space-between; }
+        .bseas-edit-overlay.closing { animation:bseas-fadeout 0.2s ease forwards; }
+        @keyframes bseas-fadein { from{opacity:0} to{opacity:1} }
+        @keyframes bseas-fadeout { from{opacity:1} to{opacity:0} }
+        .bseas-edit-modal { background:white; border-radius:12px; width:90%; max-width:640px; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.2); animation:bseas-edit-modal-in 0.28s var(--ease-spring); }
+        .bseas-edit-modal.closing { animation:bseas-edit-modal-out 0.2s var(--ease-out) forwards; }
+        @keyframes bseas-edit-modal-in { from{opacity:0; transform:translateY(-60px) scale(0.96)} to{opacity:1; transform:none} }
+        @keyframes bseas-edit-modal-out { from{opacity:1; transform:none} to{opacity:0; transform:translateY(-60px) scale(0.96)} }
+        .bseas-edit-modal-header { padding:14px 20px; font-size:16px; font-weight:600; color:var(--bseas-text); border-bottom:1px solid var(--bseas-border); display:flex; align-items:center; justify-content:space-between; }
         .bseas-edit-modal-body { flex:1; overflow-y:auto; padding:8px 20px; }
         .bseas-edit-entry { display:flex; gap:10px; padding:8px 0; border-bottom:1px solid rgba(0,0,0,0.05); align-items:flex-start; }
-        .bseas-edit-ts { font-size:11px; color:var(--bseas-primary); font-family:monospace; font-weight:700; background:rgba(0,174,236,0.06); padding:4px 6px; border-radius:4px; flex-shrink:0; min-width:90px; text-align:center; margin-top:2px; }
-        .bseas-edit-textarea { flex:1; border:1px solid var(--bseas-border); border-radius:6px; padding:6px 8px; font-size:13px; color:var(--bseas-text); resize:vertical; min-height:34px; font-family:inherit; transition:border-color 0.2s; }
+        .bseas-edit-ts { font-size:12px; color:var(--bseas-primary); font-family:monospace; font-weight:700; background:rgba(0,174,236,0.06); padding:4px 6px; border-radius:4px; flex-shrink:0; min-width:90px; text-align:center; margin-top:2px; }
+        .bseas-edit-textarea { flex:1; border:1px solid var(--bseas-border); border-radius:6px; padding:8px 10px; font-size:15px; color:var(--bseas-text); resize:vertical; min-height:38px; font-family:inherit; transition:border-color 0.2s; line-height:1.5; }
         .bseas-edit-textarea:focus { outline:none; border-color:var(--bseas-primary); box-shadow:0 0 0 2px rgba(0,174,236,0.1); }
         .bseas-edit-modal-footer { padding:12px 20px; border-top:1px solid var(--bseas-border); display:flex; justify-content:flex-end; gap:10px; }
         .bseas-edit-modal-btn { padding:6px 18px; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; border:none; transition:all 0.2s; }
@@ -397,7 +403,10 @@
         .bseas-source-arrow { width:20px; height:20px; display:flex; align-items:center; justify-content:center; transition:transform 0.3s cubic-bezier(0.4,0,0.2,1); color:var(--bseas-text-dim); }
         .bseas-source-arrow svg { width:16px; height:16px; fill:currentColor; }
         .bseas-source-arrow.collapsed { transform:rotate(-90deg); }
-        .bseas-source-body { padding:0 22px 14px; display:flex; flex-wrap:wrap; gap:8px; animation:bseas-slideup 0.3s ease; }
+        .bseas-collapse { display:grid; grid-template-rows:0fr; transition:grid-template-rows 0.3s var(--ease-out); }
+        .bseas-collapse > .bseas-collapse-inner { overflow:hidden; min-height:0; }
+        .bseas-collapse.open { grid-template-rows:1fr; }
+        .bseas-source-body { padding:4px 22px 14px; display:flex; flex-wrap:wrap; gap:8px; }
         .bseas-source-body.hidden { display:none; }
         .bseas-subtitle-option { padding:6px 14px; background:white; border:1px solid var(--bseas-border); border-radius:20px; color:var(--bseas-text); font-size:13px; font-weight:500; cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); display:flex; align-items:center; gap:6px; position:relative; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
         .bseas-subtitle-option::before { content:''; position:absolute; top:0; left:0; width:0; height:100%; background:var(--bseas-primary); opacity:0.08; transition:width 0.3s ease; }
@@ -422,6 +431,17 @@
         .bseas-content { flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable; padding:0 22px 0; overscroll-behavior:contain; -webkit-overscroll-behavior:contain; display:flex; flex-direction:column; position:relative; z-index:0; }
         .bseas-tab-body.anim-right { animation:bseas-tab-in-right 0.3s var(--ease-out); }
         .bseas-tab-body.anim-left { animation:bseas-tab-in-left 0.3s var(--ease-out); }
+        .bseas-settings-page { animation:bseas-tab-in-right 0.3s var(--ease-out); }
+        .bseas-settings-page.back { animation-name:bseas-tab-in-left; }
+        #bseas-settings-main.bseas-main-anim { animation:bseas-tab-in-left 0.3s var(--ease-out); }
+        .bseas-settings-link-entry { display:flex; align-items:center; justify-content:space-between; padding:13px 16px; background:transparent; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); cursor:pointer; transition:all 0.2s; margin:4px 0 0; }
+        .bseas-settings-link-entry:hover { background:rgba(120,120,128,0.06); border-color:rgba(120,120,128,0.2); }
+        .bseas-settings-link-entry-label { font-size:13.5px; font-weight:500; color:var(--bseas-text); display:flex; align-items:center; gap:8px; }
+        .bseas-settings-link-entry-arrow { color:var(--bseas-text-dim); transition:transform 0.25s var(--ease-out); }
+        .bseas-settings-link-entry:hover .bseas-settings-link-entry-arrow { transform:translateX(3px); }
+        .bseas-settings-back { display:flex; align-items:center; gap:6px; margin:0 0 12px; padding:8px 12px; background:rgba(120,120,128,0.06); border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-sm); cursor:pointer; font-size:13px; font-weight:500; color:var(--bseas-text-dim); transition:all 0.2s; align-self:flex-start; }
+        .bseas-settings-back:hover { color:var(--bseas-text); background:rgba(120,120,128,0.1); }
+        .bseas-settings-back svg { width:16px; height:16px; fill:currentColor; }
         .bseas-content::-webkit-scrollbar { width:6px; }
         .bseas-content::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:4px; transition:background 0.2s; }
         .bseas-content::-webkit-scrollbar-thumb:hover { background:#94a3b8; }
@@ -540,7 +560,7 @@
         .bseas-settings-row-action { flex-shrink: 0; }
         .bseas-settings-row-action select,
         .bseas-settings-row-action input { min-width: 120px; max-width: 160px; }
-        .bseas-settings-stack-label { display:block; font-size:12.5px; font-weight:500; color: var(--bseas-text-dim); margin-bottom:6px; letter-spacing:0.1px; }
+        .bseas-settings-stack-label { display:block; font-size:13.5px; font-weight:500; color: var(--bseas-text); margin-bottom:6px; letter-spacing:-0.1px; }
         .bseas-settings-hint { font-size:11.5px; color: var(--bseas-text-muted); margin-top:6px; line-height:1.45; }
         .bseas-settings-input {
             width:100%; padding:10px 12px;
@@ -607,15 +627,16 @@
         .bseas-toast.success { background:rgba(16,185,129,0.95); }
         .bseas-toast.error { background:rgba(239,68,68,0.95); }
         .bseas-toast.warning { background:rgba(255,193,7,0.95); }
+        .bseas-toast.with-action { pointer-events:auto; white-space:normal; display:flex; align-items:center; gap:14px; }
+        .bseas-toast-msg { white-space:nowrap; }
+        .bseas-toast-action { color:#ffffff; cursor:pointer; text-decoration:underline; font-weight:600; white-space:nowrap; }
+        .bseas-toast-action:hover { color:#f1f5f9; }
         .bseas-settings-input:disabled,
         .bseas-settings-row.disabled-setting {
             opacity: 0.45;
-            pointer-events: none;
             filter: grayscale(60%);
             background-color: #f1f5f9;
-        }
-        .bseas-settings-row.disabled-setting {
-            cursor: default;
+            cursor: not-allowed;
         }
         .bseas-disclaimer-link { display:inline-block; color: var(--bseas-primary); font-size:12.5px; text-decoration:none; cursor:pointer; transition: color 0.2s; }
         .bseas-disclaimer-link:hover { color: var(--bseas-primary-hover); text-decoration: underline; }
@@ -650,6 +671,9 @@
     let isGeneratingAI = false;
     let autoGenerateTimer = null;
     let currentGenerationId = 0;
+    let currentStreamText = '';
+    let currentFollowupQ = null;
+    let currentFollowupText = '';
     let progressMarkInitialized = false;
     let lastAdCheckResult = null;
     let adDetectionNotified = false;
@@ -717,22 +741,37 @@
     function formatTimeWithMs(s) { const m = Math.floor(s / 60), sec = Math.floor(s % 60), ms = Math.floor((s % 1) * 100); return `${m}:${sec.toString().padStart(2,'0')}.${ms.toString().padStart(2,'0')}`; }
     function formatTimeForSRT(s) { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60), ms = Math.floor((s % 1) * 1000); return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')},${String(ms).padStart(3,'0')}`; }
     function parseAdTime(str) { str = str.trim(); const m = str.match(/^(\d+):(\d{2})$/); return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null; }
-    function formatCommentsForAI() { return hotComments.length ? hotComments.map(c => `“${c.content.length > 200 ? c.content.slice(0,200) + '...' : c.content}” ${c.like}`).join('\n') : ''; }
-    function showToast(msg, type = '') {
+    function formatCommentsForAI() { return hotComments.length ? hotComments.map(c => `“${c.content.length > 200 ? c.content.slice(0,200) + '...' : c.content}” 赞数:${c.like}`).join('\n') : ''; }
+    function showToast(msg, type = '', action) {
         let el = document.querySelector('.bseas-toast');
         if (!el) { el = document.createElement('div'); el.className = 'bseas-toast'; document.body.appendChild(el); }
-        el.textContent = msg;
         el.className = 'bseas-toast' + (type ? ' ' + type : '');
+        if (action && action.text && typeof action.onClick === 'function') {
+            safeSetInnerHTML(el, `<span class="bseas-toast-msg"></span><a class="bseas-toast-action" href="javascript:void(0);">${escapeHtml(action.text)}</a>`);
+            el.querySelector('.bseas-toast-msg').textContent = msg;
+            const link = el.querySelector('.bseas-toast-action');
+            link.onclick = (e) => { e.stopPropagation(); el.classList.remove('show'); action.onClick(); };
+            el.classList.add('with-action');
+        } else {
+            el.textContent = msg;
+            el.classList.remove('with-action');
+        }
         void el.offsetWidth;
         el.classList.add('show');
         clearTimeout(el._t);
-        el._t = setTimeout(() => el.classList.remove('show'), 2500);
+        el._t = setTimeout(() => { el.classList.remove('show'); el.classList.remove('with-action'); }, action && action.duration ? action.duration : 2500);
     }
-    function seekToTime(sec) { const v = document.querySelector('video'); if (v) { v.currentTime = sec; showToast(`跳转到 ${formatTime(sec)}`, 'success'); } }
+    function seekToTime(sec) {
+        const v = document.querySelector('video');
+        if (!v) return;
+        const prev = v.currentTime;
+        v.currentTime = sec;
+        showToast(`跳转到 ${formatTime(sec)}`, 'success', { text: '撤销', duration: 6000, onClick: () => { v.currentTime = prev; showToast(`已返回 ${formatTime(prev)}`, 'success'); } });
+    }
     function setLoadingState(loading) { isLoading = loading; document.querySelector('#bseas-refresh-btn')?.classList.toggle('spinning', loading); }
     function getVideoTitle() { const h1 = document.querySelector('h1.video-title'); if (!h1) return ''; return h1.dataset.title || h1.getAttribute('title') || h1.textContent.trim(); }
     function getVideoDescription() { const el = document.querySelector('.desc-info-text'); return el ? el.textContent.trim() : ''; }
-    function getVideoTags() { const els = document.querySelectorAll('.tag-link .tag-name'); return els.length ? Array.from(els).map(t => t.textContent.trim()) : []; }
+    function getVideoTags() { const els = document.querySelectorAll('.video-tag-container .tag-link'); const tags = []; els.forEach(t => { const nameEl = t.querySelector('.tag-name'); const name = nameEl ? nameEl.textContent.trim() : t.textContent.trim(); if (name) tags.push(name); }); return tags; }
     function getUpName() {
         const el = document.querySelector('.up-name');
         if (el) return el.textContent.trim();
@@ -1198,16 +1237,20 @@
     function buildFullPrompt(subtitleText, includeFormatRules = true) {
         const hasSubtitle = !!subtitleText.trim();
         let contextInfo = '';
+        const today = new Date();
+        const weekdays = ['日','一','二','三','四','五','六'];
+        const dateStr = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日 星期${weekdays[today.getDay()]}`;
+        contextInfo += `今天是${dateStr}。\n`;
         const videoTitle = getVideoTitle();
         const videoDesc = getVideoDescription();
         const videoTags = getVideoTags();
-        if (videoTitle) contextInfo += `视频标题：${videoTitle}\n`;
-        if (videoDesc) contextInfo += `视频简介：${videoDesc}\n`;
+        if (videoTitle) contextInfo += `视频标题：「${videoTitle}」\n`;
+        if (videoDesc) contextInfo += `视频简介：「${videoDesc}」\n`;
         if (videoTags.length > 0) contextInfo += `视频标签：${videoTags.join(', ')}\n`;
         const upName = getUpName();
         const partNum = getVideoPartNumber();
         const subLang = getCurrentSubtitleLanguage();
-        if (upName) contextInfo += `UP主：${upName}\n`;
+        if (upName) contextInfo += `UP主：「${upName}」\n`;
         if (partNum !== null) contextInfo += `当前分P：第${partNum}P\n`;
         if (subLang) contextInfo += `字幕语言：${subLang}\n`;
         if (contextInfo) contextInfo += '\n';
@@ -1222,15 +1265,22 @@
     function buildCorrectSubtitlePrompt() {
         const title = getVideoTitle();
         const desc = getVideoDescription();
-        let ctx = '';
-        if (title) ctx += `视频标题：${title}\n`;
-        if (desc) ctx += `视频简介：${desc}\n`;
+        const today = new Date();
+        const weekdays = ['日','一','二','三','四','五','六'];
+        const dateStr = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日 星期${weekdays[today.getDay()]}`;
+        let ctx = `今天是${dateStr}。\n`;
+        if (title) ctx += `视频标题：「${title}」\n`;
+        if (desc) ctx += `视频简介：「${desc}」\n`;
+        const tags = getVideoTags();
+        if (tags.length > 0) ctx += `视频标签：${tags.join(', ')}\n`;
         const upName = getUpName();
         const partNum = getVideoPartNumber();
         const subLang = getCurrentSubtitleLanguage();
-        if (upName) ctx += `UP主：${upName}\n`;
+        if (upName) ctx += `UP主：「${upName}」\n`;
         if (partNum !== null) ctx += `当前分P：第${partNum}P\n`;
         if (subLang) ctx += `字幕语言：${subLang}\n`;
+        const commentsText = hotComments.length > 0 ? formatCommentsForAI() : '';
+        if (commentsText) ctx += `\n===== 热门评论（按热度排序，可能含黑话/专有名词的正确表述，仅作修正参考）=====\n${commentsText}\n`;
         const curBody = currentSubtitleData?.body || [];
         const curJson = JSON.stringify(curBody.map(it => ({ from: it.from, to: it.to, content: it.content })));
         let otherTracks = '';
@@ -1239,6 +1289,7 @@
             if (!s.body?.length) continue;
             otherTracks += `\n--- 字幕轨道(${s.lan_doc}) ---\n` + s.body.map(it => `[${formatTime(it.from)} - ${formatTime(it.to)}] ${it.content}`).join('\n');
         }
+        const totalEntries = curBody.length;
         return `你是哔哩哔哩辅助工具的字幕修正模块。请结合视频内容与上下文，修正"当前选中字幕"中的识别错误（错别字、断句、专有名词等），进行推测、润色、优化、修正。
 ${ctx}
 ===== 当前选中字幕（JSON 数组，from/to 为秒数即时间戳）=====
@@ -1246,10 +1297,12 @@ ${curJson}
 ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正它们）=====' + otherTracks : ''}
 
 要求：
-1. 严格保持每条的 from 与 to 数值不变，仅修正 content 文本，不得改变、合并、增删任何条目。
-2. 完整输出全部条目，不得遗漏。
-3. 直接输出 JSON 数组，格式与输入一致：[{"from":0.5,"to":2.1,"content":"修正后文本"}]
-4. 不要输出任何解释文字，不要用代码块包裹。`;
+1. 仅修正每条的 content 文本，from 与 to 数值必须原样保留，不得改变。
+2. 输出数组长度必须严格等于 ${totalEntries} 条，与输入一一对应，严禁合并、拆分、新增或删除任何条目。
+3. 即使某条字幕的 content 需要大幅修正，也必须输出对应的一条，不得跳过或合并到相邻条目。
+4. 完整输出全部条目，不得遗漏。
+5. 直接输出 JSON 数组，格式与输入一致：[{"from":0.5,"to":2.1,"content":"修正后文本"}]
+6. 不要输出任何解释文字，不要用代码块包裹。`;
     }
     function parseCorrectedSubtitleJSON(rawText) {
         if (!rawText || typeof rawText !== 'string') return null;
@@ -1299,11 +1352,16 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         let lastRenderTime = 0;
         let pendingText = null;
         let timerId = null;
+        let targetEl = el;
         function doRender(text) {
             if (!shouldRender()) return;
-            safeSetInnerHTML(el, markdownToHtml(text));
-            renderLatex(el);
-            if (autoScroll) el.scrollTop = el.scrollHeight;
+            if (targetEl.id && !document.body.contains(targetEl)) {
+                const fresh = document.getElementById(targetEl.id);
+                if (fresh) targetEl = fresh; else return;
+            } else if (!document.body.contains(targetEl)) return;
+            safeSetInnerHTML(targetEl, markdownToHtml(text));
+            renderLatex(targetEl);
+            if (autoScroll) targetEl.scrollTop = targetEl.scrollHeight;
         }
         function flush() {
             timerId = null;
@@ -1338,12 +1396,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             }
         };
     }
-    async function generateAISummaryStream(subtitleText, streamEl) {
+    async function generateAISummaryStream(subtitleText, streamEl, shouldRender) {
         const fullPrompt = buildFullPrompt(subtitleText);
         const messages = [{ role: 'user', content: fullPrompt }];
-        const renderer = createThrottledRenderer(streamEl, { autoScroll: true });
-        let summary = await callAPIStream(messages, text => renderer.update(text));
+        const renderer = createThrottledRenderer(streamEl, { autoScroll: true, shouldRender: shouldRender || (() => true) });
+        let summary = await callAPIStream(messages, text => { currentStreamText = text; renderer.update(text); });
         renderer.finalize(summary);
+        currentStreamText = '';
         let adCheck = extractAdSegments(summary);
         if (bseas_save_tokens && !subtitleContainsAdKeyword()) adCheck = { type: 'none', segments: [] };
         lastAdCheckResult = adCheck;
@@ -1381,6 +1440,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             abortCurrentRequest();
             currentGenerationId++;
             isGeneratingAI = false;
+            currentStreamText = '';
+            currentFollowupQ = null;
+            currentFollowupText = '';
             if (autoGenerateTimer) { clearTimeout(autoGenerateTimer); autoGenerateTimer = null; }
         }
         currentVideoKey = vk;
@@ -1446,24 +1508,42 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     let isCorrectingSubtitle = false;
     let _correctProgressRAF = 0;
-    function startCorrectProgress(bar, estimatedMs) {
+    let _correctBar = null;
+    let _correctPhase = 0;
+    let _correctPhase1Start = 0;
+    let _correctEstimatedTotal = 0;
+    function startCorrectProgress(bar, estimatedTotalChars) {
         if (!bar) return;
+        _correctBar = bar;
+        _correctPhase = 1;
+        _correctEstimatedTotal = Math.max(estimatedTotalChars, 1000);
         bar.style.width = '0%';
-        const totalMs = Math.max(estimatedMs, 2000);
-        const startTime = performance.now();
+        bar.style.transition = '';
+        _correctPhase1Start = performance.now();
         const tick = (now) => {
-            const elapsed = now - startTime;
-            const ratio = Math.min(elapsed / totalMs, 1);
-            const eased = 1 - Math.pow(1 - ratio, 3.2);
-            const pct = Math.min(eased * 95, 95);
-            bar.style.width = pct + '%';
+            if (_correctPhase !== 1) return;
+            const elapsed = now - _correctPhase1Start;
+            const ratio = Math.min(elapsed / 20000, 1);
+            const eased = 1 - Math.pow(1 - ratio, 3);
+            bar.style.width = (eased * 20) + '%';
             if (ratio < 1) {
                 _correctProgressRAF = requestAnimationFrame(tick);
             }
         };
         _correctProgressRAF = requestAnimationFrame(tick);
     }
+    function updateCorrectProgress(receivedChars) {
+        if (!_correctBar || _correctPhase === 0) return;
+        if (_correctPhase === 1) {
+            _correctPhase = 2;
+            if (_correctProgressRAF) { cancelAnimationFrame(_correctProgressRAF); _correctProgressRAF = 0; }
+        }
+        const ratio = _correctEstimatedTotal > 0 ? Math.min(receivedChars / _correctEstimatedTotal, 1) : 0;
+        bar_setPct(_correctBar, 20 + ratio * 80);
+    }
+    function bar_setPct(bar, pct) { if (bar) bar.style.width = pct + '%'; }
     function finishCorrectProgress(bar) {
+        _correctPhase = 0;
         if (_correctProgressRAF) { cancelAnimationFrame(_correctProgressRAF); _correctProgressRAF = 0; }
         if (!bar) return;
         bar.style.transition = 'width 0.3s ease';
@@ -1474,25 +1554,26 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (isCorrectingSubtitle) return;
         if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
         if (currentSubtitleData?.id === 'ai-corrected') { showToast('已修正字幕无需重复修正', 'warning'); return; }
-        if (bseas_disable_api) { showToast('已禁用API，无法修正', 'warning'); return; }
-        if (!bseas_api_key) { showToast('未配置API Key', 'warning'); return; }
+        if (bseas_disable_api) { showToast('已禁用 API，无法修正', 'warning'); return; }
+        if (!bseas_api_key) { showToast('未配置 API Key', 'warning'); return; }
         const correctionText = getTimestampedTextForAI();
         if (bseas_confirm_enabled && correctionText.length > bseas_confirm_chars) {
-            if (!confirm(`字幕文字量过多（包含时间戳为 ${correctionText.length} 字），调用AI修正可能会消耗较多 Tokens，是否继续？`)) return;
+            if (!confirm(`字幕文字量过多（包含时间戳为 ${correctionText.length} 字），调用 AI 修正可能会消耗较多 Tokens，是否继续？`)) return;
         }
         isCorrectingSubtitle = true;
         const btn = document.getElementById('bseas-ai-correct-btn');
         const bar = btn?.querySelector('.bseas-correct-progress');
         if (btn) { btn.classList.add('loading'); const sp = btn.querySelector('span'); if (sp) sp.textContent = '修正中...'; }
-        const totalChars = currentSubtitleData.body.reduce((s, it) => s + (it.content || '').length, 0);
-        const estimatedMs = Math.max(Math.round(totalChars * 50), 2000);
-        startCorrectProgress(bar, estimatedMs);
+        const curJson = JSON.stringify(currentSubtitleData.body.map(it => ({ from: it.from, to: it.to, content: it.content })));
+        startCorrectProgress(bar, curJson.length * 1.1);
         showToast('开始修正字幕，耗时较长，请耐心等候', '');
         try {
             const originalBody = currentSubtitleData.body;
             const lanDoc = currentSubtitleData.lan_doc || '已修正';
+            if (!hotComments.length) { try { hotComments = await fetchHotComments(); } catch (e) {} }
             const prompt = buildCorrectSubtitlePrompt();
-            const resp = await callAPINoStream([{ role: 'user', content: prompt }]);
+            const messages = [{ role: 'user', content: prompt }];
+            const resp = await callAPIStream(messages, text => updateCorrectProgress(text.length));
             const parsed = parseCorrectedSubtitleJSON(resp);
             if (!parsed || parsed.length !== originalBody.length) throw new Error('修正条目数不匹配，请重试');
             const body = parsed.map((it, i) => ({ from: originalBody[i].from, to: originalBody[i].to, content: it.content }));
@@ -1507,7 +1588,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             finishCorrectProgress(bar);
             isCorrectingSubtitle = false;
             const btn2 = document.getElementById('bseas-ai-correct-btn');
-            if (btn2) { btn2.classList.remove('loading'); const sp = btn2.querySelector('span'); if (sp) sp.textContent = 'AI修正字幕'; }
+            if (btn2) { btn2.classList.remove('loading'); const sp = btn2.querySelector('span'); if (sp) sp.textContent = 'AI 修正字幕'; }
         }
     }
     function openSubtitleEditor() {
@@ -1521,12 +1602,22 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const entriesHtml = body.map((it, i) => `<div class="bseas-edit-entry"><span class="bseas-edit-ts">${formatTime(it.from)} -> ${formatTime(it.to)}</span><textarea class="bseas-edit-textarea" data-idx="${i}" rows="1">${escapeHtml(it.content || '')}</textarea></div>`).join('');
         safeSetInnerHTML(overlay, `<div class="bseas-edit-modal"><div class="bseas-edit-modal-header"><span>编辑字幕 - ${escapeHtml(lanDoc)}（共${body.length}条）</span></div><div class="bseas-edit-modal-body">${entriesHtml}</div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save">保存</button></div></div>`);
         document.body.appendChild(overlay);
-        const closeOverlay = () => { overlay.remove(); document.removeEventListener('keydown', escHandler); };
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeOverlay(); });
+        const closeOverlay = () => {
+            const modal = overlay.querySelector('.bseas-edit-modal');
+            if (modal) {
+                modal.classList.add('closing');
+                overlay.classList.add('closing');
+                setTimeout(() => { overlay.remove(); document.removeEventListener('keydown', escHandler); }, 200);
+            } else {
+                overlay.remove(); document.removeEventListener('keydown', escHandler);
+            }
+        };
+        overlay.addEventListener('click', (e) => { e.stopPropagation(); if (e.target === overlay) closeOverlay(); });
         const escHandler = (e) => { if (e.key === 'Escape') closeOverlay(); };
         document.addEventListener('keydown', escHandler);
-        overlay.querySelector('.cancel').addEventListener('click', closeOverlay);
-        overlay.querySelector('.save').addEventListener('click', () => {
+        overlay.querySelector('.cancel').addEventListener('click', (e) => { e.stopPropagation(); closeOverlay(); });
+        overlay.querySelector('.save').addEventListener('click', (e) => {
+            e.stopPropagation();
             const textareas = overlay.querySelectorAll('.bseas-edit-textarea');
             const editedBody = body.map((it, i) => ({ from: it.from, to: it.to, content: textareas[i] ? textareas[i].value : it.content }));
             setCorrectedSubtitle(currentVideoKey, editedBody, lanDoc, 'manual');
@@ -1586,7 +1677,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     </div>
                 </div>
                 <div class="bseas-api-warning-container">${showApiWarning ? `<div class="bseas-api-warning"><span class="bseas-api-warning-icon">⚠</span><span class="bseas-api-warning-text">未设置API Key，AI分析功能将无法使用</span><button class="bseas-api-warning-btn" id="bseas-go-settings">去设置</button></div>` : ''}</div>
-                <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">选择或修正字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-source-body hidden" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div>
+                <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">选择或修正字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-collapse" id="bseas-source-collapse"><div class="bseas-collapse-inner"><div class="bseas-source-body" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div></div></div>
                 <div class="bseas-tabs"><button class="bseas-tab active" data-tab="preview">浏览</button><button class="bseas-tab" data-tab="ai">AI 分析</button><button class="bseas-tab" data-tab="text">文本</button></div></div><div class="bseas-tab-body"><div class="bseas-empty">正在初始化...</div></div></div>
                 <div class="bseas-footer">
                     <div id="bseas-footer-normal" style="display:flex;gap:12px;width:100%;">
@@ -1737,28 +1828,39 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (triggerBtn) setupDrag(triggerBtn, true);
     }
     function saveSettings() {
-        bseas_platform = document.getElementById('bseas-s-platform').value;
-        bseas_api_url = document.getElementById('bseas-s-url').value.trim();
-        bseas_api_key = document.getElementById('bseas-s-key').value.trim();
-        const selectedModel = document.getElementById('bseas-s-model-select').value;
-        bseas_model = selectedModel === '自定义' ? document.getElementById('bseas-s-model-custom').value.trim() : selectedModel;
-        bseas_auto_summary = document.getElementById('bseas-s-auto').checked;
-        bseas_opinion_analysis = document.getElementById('bseas-s-opinion').checked;
-        bseas_auto_skip_ad = document.getElementById('bseas-s-auto-skip').checked;
-        bseas_auto_open_panel = document.getElementById('bseas-s-auto-open').checked;
-        bseas_auto_open_tab = document.getElementById('bseas-s-auto-tab').value;
-        bseas_save_tokens = document.getElementById('bseas-s-save-tokens').checked;
+        const get = (id, prop, fallback) => {
+            const el = document.getElementById(id);
+            if (!el) return fallback;
+            const v = el[prop];
+            return v === undefined ? fallback : v;
+        };
+        const val = (id, fb) => get(id, 'value', fb);
+        const chk = (id, fb) => get(id, 'checked', fb);
+        bseas_platform = val('bseas-s-platform', bseas_platform);
+        bseas_api_url = (val('bseas-s-url', bseas_api_url) || '').trim();
+        bseas_api_key = (val('bseas-s-key', bseas_api_key) || '').trim();
+        const selectedModel = val('bseas-s-model-select', null);
+        const customModel = (val('bseas-s-model-custom', '') || '').trim();
+        bseas_model = selectedModel === '自定义' ? (customModel || bseas_model) : (selectedModel || bseas_model);
+        bseas_auto_summary = chk('bseas-s-auto', bseas_auto_summary);
+        bseas_opinion_analysis = chk('bseas-s-opinion', bseas_opinion_analysis);
+        bseas_auto_skip_ad = chk('bseas-s-auto-skip', bseas_auto_skip_ad);
+        bseas_auto_open_panel = chk('bseas-s-auto-open', bseas_auto_open_panel);
+        bseas_auto_open_tab = val('bseas-s-auto-tab', bseas_auto_open_tab);
+        bseas_save_tokens = chk('bseas-s-save-tokens', bseas_save_tokens);
         if (!bseas_save_tokens) {
-            bseas_detail_level = document.getElementById('bseas-s-detail').value;
-            bseas_opinion_comments_count = parseInt(document.getElementById('bseas-s-opinion-count').value) || 30;
+            const dv = val('bseas-s-detail', null);
+            if (dv) bseas_detail_level = dv;
+            const oc = document.getElementById('bseas-s-opinion-count');
+            if (oc) bseas_opinion_comments_count = parseInt(oc.value) || 30;
         }
-        bseas_disable_api = document.getElementById('bseas-s-disable-api').checked;
-        bseas_panel_pos_preset = document.getElementById('bseas-s-pos-preset').value;
-        bseas_max_preview_subtitles = parseInt(document.getElementById('bseas-s-max-preview').value) || 200;
-        bseas_confirm_enabled = document.getElementById('bseas-s-confirm-enable').checked;
-        bseas_confirm_chars = parseInt(document.getElementById('bseas-s-confirm-chars').value) || 20000;
-        bseas_ai_evaluation = document.getElementById('bseas-s-ai-evaluation').checked;
-        bseas_update_mode = document.getElementById('bseas-s-update-mode').value;
+        bseas_disable_api = chk('bseas-s-disable-api', bseas_disable_api);
+        bseas_panel_pos_preset = val('bseas-s-pos-preset', bseas_panel_pos_preset);
+        bseas_max_preview_subtitles = parseInt(val('bseas-s-max-preview', bseas_max_preview_subtitles)) || 600;
+        bseas_confirm_enabled = chk('bseas-s-confirm-enable', bseas_confirm_enabled);
+        bseas_confirm_chars = parseInt(val('bseas-s-confirm-chars', bseas_confirm_chars)) || 20000;
+        bseas_ai_evaluation = chk('bseas-s-ai-evaluation', bseas_ai_evaluation);
+        bseas_update_mode = val('bseas-s-update-mode', bseas_update_mode);
         GM_setValue('bseas_platform', bseas_platform);
         GM_setValue('bseas_api_url', bseas_api_url);
         GM_setValue('bseas_api_key_' + bseas_platform, bseas_api_key);
@@ -1784,6 +1886,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const panel = c.querySelector('.bseas-panel');
         const triggerBtn = c.querySelector('.bseas-trigger-btn');
         panel.addEventListener('click', e => e.stopPropagation());
+        if (triggerBtn) {
+            triggerBtn.addEventListener('mousemove', (e) => {
+                const r = triggerBtn.getBoundingClientRect();
+                triggerBtn.style.setProperty('--bseas-mx', ((e.clientX - r.left) / r.width * 100) + '%');
+                triggerBtn.style.setProperty('--bseas-my', ((e.clientY - r.top) / r.height * 100) + '%');
+            });
+        }
         let _closeTimer = null;
         function closePanelWithAnim() {
             if (!panelVisible) return;
@@ -1819,7 +1928,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         c.querySelector('#bseas-source-toggle').addEventListener('click', (e) => {
             e.stopPropagation();
             sourceCollapsed = !sourceCollapsed;
-            c.querySelector('#bseas-source-body').classList.toggle('hidden', sourceCollapsed);
+            c.querySelector('#bseas-source-collapse')?.classList.toggle('open', !sourceCollapsed);
             c.querySelector('#bseas-source-arrow').classList.toggle('collapsed', sourceCollapsed);
         });
         c.querySelectorAll('.bseas-tab').forEach(tab => tab.addEventListener('click', (e) => { e.stopPropagation(); switchTab(tab.dataset.tab); }));
@@ -1911,7 +2020,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                         btnsHtml += `<div class="bseas-correct-op edit" id="bseas-edit-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg><span>编辑字幕</span></div>`;
                     }
                     if (showCorrectBtn) {
-                        btnsHtml += `<div class="bseas-correct-op${bseas_disable_api ? ' disabled' : ''}" id="bseas-ai-correct-btn"><div class="bseas-correct-progress"></div><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>AI修正字幕</span></div>`;
+                        btnsHtml += `<div class="bseas-correct-op${bseas_disable_api ? ' disabled' : ''}" id="bseas-ai-correct-btn"${bseas_disable_api ? ' title="此功能在「禁用 API」启用时不可用"' : ''}><div class="bseas-correct-progress"></div><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>AI修正字幕</span></div>`;
                     }
                     btnsHtml += '</div>';
                 }
@@ -1921,7 +2030,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     const s = allSubtitles.find(x => String(x.id) === String(o.dataset.id));
                     if (s) loadSubtitle(s);
                 }));
-                document.getElementById('bseas-ai-correct-btn')?.addEventListener('click', (e) => { e.stopPropagation(); runAICorrectSubtitle(); });
+                document.getElementById('bseas-ai-correct-btn')?.addEventListener('click', (e) => { e.stopPropagation(); if (e.currentTarget.classList.contains('disabled')) return; runAICorrectSubtitle(); });
                 document.getElementById('bseas-edit-subtitle-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSubtitleEditor(); });
             } else {
                 safeSetInnerHTML(sb, '<div style="color:var(--bseas-text-dim);font-size:13px;padding-bottom:4px;">未检测到可用字幕</div>');
@@ -2330,7 +2439,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         let html = '';
         if (!cachedSummary) {
-            if (bseas_disable_api) {
+            if (isGeneratingAI && !bseas_disable_api) {
+                const streamHtml = currentStreamText ? markdownToHtml(currentStreamText) : '<div class="bseas-loading"><div class="bseas-spinner"></div><div>生成中...</div></div>';
+                html += `<div class="bseas-ai-result bseas-markdown" id="bseas-stream-body" style="min-height:400px;overflow-y:auto;">${streamHtml}</div>`;
+            } else if (bseas_disable_api) {
                 html += `<button class="bseas-ai-big-btn" id="bseas-copy-prompt-btn"><svg width="17" height="17" viewBox="0 0 24 24"><path fill="#ffffff" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg> 复制AI提示词</button>`;
                 if (!hasSubtitle) html += '<div class="bseas-empty" style="padding:40px 20px;">未获取到字幕，点击复制提示词进行舆情分析</div>';
             } else {
@@ -2360,6 +2472,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 const displaySummary = stripAdLine(cachedSummary);
                 html += `<div style="position:relative;">${retryHtml}<div class="bseas-ai-result bseas-markdown" id="bseas-ai-result"></div></div>`;
                 if (cachedQA.length) html += cachedQA.map(qa => `<div class="bseas-qa-item"><div class="bseas-qa-q">💭 ${escapeHtml(qa.q)}</div><div class="bseas-qa-a bseas-markdown bseas-qa-md"></div></div>`).join('');
+                if (isGeneratingAI && currentFollowupQ) {
+                    const followupHtml = currentFollowupText ? markdownToHtml(currentFollowupText) : '<div style="display:flex;align-items:center;gap:8px;color:var(--bseas-text-muted);"><span class="bseas-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div>';
+                    html += `<div class="bseas-qa-item"><div class="bseas-qa-q">💭 ${escapeHtml(currentFollowupQ)}</div><div class="bseas-qa-a bseas-markdown" id="bseas-stream-followup">${followupHtml}</div></div>`;
+                }
                 if (!bseas_disable_api) {
                     html += `<div class="bseas-followup-section"><div class="bseas-followup-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>追问</div><textarea class="bseas-followup-input" id="bseas-followup-input" placeholder="就视频内容提问" ${isGeneratingAI ? 'disabled' : ''}></textarea><button class="bseas-followup-btn" id="bseas-followup-btn" ${isGeneratingAI ? 'disabled' : ''}>${isGeneratingAI ? '生成中...' : '发送追问'}</button></div>`;
                 }
@@ -2392,6 +2508,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             lastAdCheckResult = null; adDetectionNotified = false;
             isGeneratingAI = true;
             const myGenerationId = ++currentGenerationId;
+            currentStreamText = '';
             const genBtn = document.getElementById('bseas-generate-btn');
             const retryBtn = document.getElementById('bseas-retry-btn');
             if (genBtn) genBtn.disabled = true;
@@ -2400,7 +2517,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             const streamEl = document.getElementById('bseas-stream-body');
             let success = false;
             try {
-                await generateAISummaryStream(subtitleText, streamEl);
+                await generateAISummaryStream(subtitleText, streamEl, () => myGenerationId === currentGenerationId);
                 success = true;
             } catch (err) {
                 if (myGenerationId !== currentGenerationId) return;
@@ -2410,6 +2527,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             } finally {
                 if (myGenerationId === currentGenerationId) {
                     isGeneratingAI = false;
+                    currentStreamText = '';
                     if (currentTab === 'ai') {
                         renderAITab(el);
                         if (success) el.scrollTop = 0;
@@ -2457,9 +2575,11 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 if (isGeneratingAI) { showToast('请等待当前生成完成', 'warning'); return; }
                 isGeneratingAI = true;
                 const myGenerationId = ++currentGenerationId;
+                currentFollowupQ = q;
+                currentFollowupText = '';
                 fBtn.disabled = true; fBtn.textContent = '思考中...'; fInput.disabled = true;
                 const followupSection = el.querySelector('.bseas-followup-section');
-                const answerId = 'bseas-ans-' + Date.now();
+                const answerId = 'bseas-stream-followup';
                 const qaEl = document.createElement('div');
                 qaEl.className = 'bseas-qa-item';
                 safeSetInnerHTML(qaEl, `<div class="bseas-qa-q">💭 ${escapeHtml(q)}</div><div class="bseas-qa-a bseas-markdown" id="${answerId}"><div style="display:flex;align-items:center;gap:8px;color:var(--bseas-text-muted);"><span class="bseas-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div></div>`);
@@ -2468,11 +2588,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 aiConversationHistory.push({ role: 'user', content: q });
                 const renderer = createThrottledRenderer(ansEl, { shouldRender: () => myGenerationId === currentGenerationId });
                 try {
-                    const a = await callAPIStream(aiConversationHistory, text => renderer.update(text));
+                    const a = await callAPIStream(aiConversationHistory, text => { currentFollowupText = text; renderer.update(text); });
                     if (myGenerationId !== currentGenerationId) return;
                     renderer.finalize(a);
                     aiConversationHistory.push({ role: 'assistant', content: a });
                     appendCachedQA(currentVideoKey, q, a);
+                    currentFollowupQ = null;
+                    currentFollowupText = '';
                     fInput.value = '';
                     showToast('✓ 回复完成', 'success');
                 } catch (e) {
@@ -2482,7 +2604,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     aiConversationHistory.pop();
                     showToast(`✗ 出错: ${e.message}`, 'error');
                 } finally {
-                    if (myGenerationId === currentGenerationId) { isGeneratingAI = false; fBtn.disabled = false; fBtn.textContent = '发送追问'; fInput.disabled = false; fInput.focus(); }
+                    if (myGenerationId === currentGenerationId) { isGeneratingAI = false; currentFollowupQ = null; currentFollowupText = ''; fBtn.disabled = false; fBtn.textContent = '发送追问'; fInput.disabled = false; fInput.focus(); }
                 }
             };
             fBtn.addEventListener('click', e => { e.stopPropagation(); send(); });
@@ -2505,18 +2627,23 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const currentPlatformKey = GM_getValue('bseas_api_key_' + bseas_platform, '');
         const updateBadgeHtml = (hasUpdate && bseas_update_mode !== 'disabled') ? ` <a href="${updateLinkUrl || SCRIPTCAT_URL}" target="_blank" rel="noopener noreferrer" class="bseas-update-badge">新版本 v${escapeHtml(latestVersion)}</a>` : '';
         safeSetInnerHTML(el, `<div class="bseas-settings">
+    <div id="bseas-settings-main">
     <section class="bseas-settings-section">
         <div style="display:flex;justify-content:space-between;align-items:center;margin:0 4px 8px 4px;">
             <div class="bseas-settings-section-title" style="margin:0;">API 配置</div>
             <span id="bseas-api-hint-btn" style="font-size:12px;font-weight:500;color:var(--bseas-primary);cursor:pointer;letter-spacing:0;">查看使用提示</span>
         </div>
-        <div id="bseas-api-hint-box" style="display:none;background:rgba(0,174,236,0.05);border:1px solid rgba(0,174,236,0.15);border-radius:12px;padding:14px;font-size:12.5px;color:#0c4a6e;margin-bottom:10px;line-height:1.65;animation:bseas-slideup 0.3s var(--ease-out);">
-            <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">前置基础</div>
-            <ul style="margin:0 0 10px 0;padding-left:18px;"><li style="margin-bottom:4px;"><b>什么是 AI API：</b>第三方 AI 大模型开放的调用接口，发送文字请求，云端 AI 服务器返回回答。本程序的 AI 分析、视频总结、广告跳过、舆情分析功能均依赖此接口。</li><li><b>什么是 API Key（密钥）：</b>相当于 AI 接口的「门禁密码」，每次调用 AI 都需要携带此密钥验证身份、扣除额度。密钥请勿泄露。本程序开源可查，不会上传您的 API Key。</li></ul>
-            <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">获取 API Key</div>
-            <ul style="margin:0 0 10px 0;padding-left:18px;"><li style="margin-bottom:4px;">选择心仪的供应商（推荐 DeepSeek），点击「获取 API Key」跳转至供应商官网，注册账号。付费模型需小额充值（归属供应商）。也可选择智谱的免费模型。</li><li>找到 API 密钥入口，创建一个 API 密钥。不要泄露此密钥！</li></ul>
-            <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">使用 API Key</div>
-            <ul style="margin:0;padding-left:18px;"><li>在本程序中选择供应商和模型，输入 API Key 即可。本程序场景不需要强大的模型能力，建议选择价格较低的模型。</li></ul>
+        <div class="bseas-collapse" id="bseas-api-hint-collapse" style="margin-bottom:10px;">
+            <div class="bseas-collapse-inner">
+                <div id="bseas-api-hint-box" style="background:rgba(0,174,236,0.05);border:1px solid rgba(0,174,236,0.15);border-radius:12px;padding:14px;font-size:12.5px;color:#0c4a6e;line-height:1.65;">
+                    <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">前置基础</div>
+                    <ul style="margin:0 0 10px 0;padding-left:18px;"><li style="margin-bottom:4px;"><b>什么是 AI API：</b>第三方 AI 大模型开放的调用接口，发送文字请求，云端 AI 服务器返回回答。本程序的 AI 分析、视频总结、广告跳过、舆情分析功能均依赖此接口。</li><li><b>什么是 API Key（密钥）：</b>相当于 AI 接口的「门禁密码」，每次调用 AI 都需要携带此密钥验证身份、扣除额度。密钥请勿泄露。本程序开源可查，不会上传您的 API Key。</li></ul>
+                    <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">获取 API Key</div>
+                    <ul style="margin:0 0 10px 0;padding-left:18px;"><li style="margin-bottom:4px;">选择心仪的供应商（推荐 DeepSeek），点击「获取 API Key」跳转至供应商官网，注册账号。付费模型需小额充值（归属供应商）。也可选择智谱的免费模型。</li><li>找到 API 密钥入口，创建一个 API 密钥。不要泄露此密钥！</li></ul>
+                    <div style="font-weight:600;margin-bottom:4px;font-size:13px;color:#0c4a6e;">使用 API Key</div>
+                    <ul style="margin:0;padding-left:18px;"><li>在本程序中选择供应商和模型，输入 API Key 即可。本程序场景不需要强大的模型能力，建议选择价格较低的模型。</li></ul>
+                </div>
+            </div>
         </div>
         <div class="bseas-settings-card">
             <div class="bseas-settings-row inline">
@@ -2550,18 +2677,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 <input type="text" class="bseas-settings-input bseas-password-mask" id="bseas-s-key" value="${escapeHtml(currentPlatformKey)}" placeholder="输入 API Key...">
                 <div class="bseas-settings-hint">本程序不会上传 API Key。请勿泄露您的 API Key！</div>
             </div>
-            <div class="bseas-settings-row inline">
-                <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">省 Tokens 模式（不推荐）</div>
-                    <div class="bseas-settings-row-desc">通过压缩提示词、提前检测常见广告、压缩结果实现，将降低生成质量和广告识别精度，不建议开启</div>
-                </div>
-                <div class="bseas-settings-row-action">
-                    <label class="bseas-toggle">
-                        <input type="checkbox" id="bseas-s-save-tokens" ${bseas_save_tokens ? 'checked' : ''}>
-                        <span class="bseas-toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
         </div>
     </section>
 
@@ -2570,15 +2685,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         <div class="bseas-settings-card">
             <div class="bseas-settings-row inline">
                 <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">详细程度</div>
-                </div>
-                <div class="bseas-settings-row-action">
-                    <select class="bseas-settings-input" id="bseas-s-detail">${detailOptions}</select>
-                </div>
-            </div>
-            <div class="bseas-settings-row inline">
-                <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">自动AI分析</div>
+                    <div class="bseas-settings-row-label">自动 AI 分析</div>
                 </div>
                 <div class="bseas-settings-row-action">
                     <label class="bseas-toggle">
@@ -2587,48 +2694,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     </label>
                 </div>
             </div>
-            <div class="bseas-settings-row inline">
-                <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">启用二次确认</div>
-                    <div class="bseas-settings-row-desc">启用后，当字数超过限制时，AI分析前将向您二次确认，以免浪费Tokens。</div>
-                </div>
-                <div class="bseas-settings-row-action">
-                    <label class="bseas-toggle">
-                        <input type="checkbox" id="bseas-s-confirm-enable" ${bseas_confirm_enabled ? 'checked' : ''}>
-                        <span class="bseas-toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
-            <div class="bseas-settings-row">
-                <label class="bseas-settings-stack-label">二次确认字数阈值</label>
-                <input type="number" class="bseas-settings-input" id="bseas-s-confirm-chars" value="${bseas_confirm_chars}" min="1000" ${!bseas_confirm_enabled ? 'disabled' : ''}>
-                <div class="bseas-settings-hint">此处字数包括时间戳。</div>
-            </div>
-        </div>
-    </section>
-
-    <section class="bseas-settings-section">
-        <div class="bseas-settings-section-title">广告跳过</div>
-        <div class="bseas-settings-card">
-            <div class="bseas-settings-row inline">
-                <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">广告自动跳过</div>
-                    <div class="bseas-settings-row-desc">开启后检测到广告时段将自动跳过。关闭后仅在进度条标黄提示，不自动跳转。</div>
-                    <div class="bseas-settings-hint">广告跳过功能仅在AI分析后可用。</div>
-                </div>
-                <div class="bseas-settings-row-action">
-                    <label class="bseas-toggle">
-                        <input type="checkbox" id="bseas-s-auto-skip" ${bseas_auto_skip_ad ? 'checked' : ''}>
-                        <span class="bseas-toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section class="bseas-settings-section">
-        <div class="bseas-settings-section-title">舆情分析</div>
-        <div class="bseas-settings-card">
             <div class="bseas-settings-row inline">
                 <div class="bseas-settings-row-content">
                     <div class="bseas-settings-row-label">舆论分析</div>
@@ -2641,21 +2706,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     </label>
                 </div>
             </div>
-            <div class="bseas-settings-row">
-                <label class="bseas-settings-stack-label">获取评论数上限</label>
-                <input type="number" class="bseas-settings-input" id="bseas-s-opinion-count" value="${bseas_opinion_comments_count}" min="0" max="100">
-                <div class="bseas-settings-hint">获取的评论数可能会小于但不会超过此限制</div>
-            </div>
-        </div>
-    </section>
-
-    <section class="bseas-settings-section">
-        <div class="bseas-settings-section-title">AI 评价</div>
-        <div class="bseas-settings-card">
             <div class="bseas-settings-row inline">
                 <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">AI评价</div>
-                    <div class="bseas-settings-row-desc">AI将在总结后给出自己的评价，仅供参考</div>
+                    <div class="bseas-settings-row-label">AI 评价</div>
+                    <div class="bseas-settings-row-desc">AI 将在总结后给出自己的评价，仅供参考</div>
                 </div>
                 <div class="bseas-settings-row-action">
                     <label class="bseas-toggle">
@@ -2682,35 +2736,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     </label>
                 </div>
             </div>
-            <div class="bseas-settings-row">
-                <label class="bseas-settings-stack-label">自动打开的标签页</label>
-                <select class="bseas-settings-input" id="bseas-s-auto-tab" ${!bseas_auto_open_panel ? 'disabled' : ''}>${tabOptions}</select>
-            </div>
-            <div class="bseas-settings-row inline">
-                <div class="bseas-settings-row-content">
-                    <div class="bseas-settings-row-label">按钮默认位置</div>
-                    <div class="bseas-settings-row-desc">拖动按钮和面板以改变位置</div>
-                </div>
-                <div class="bseas-settings-row-action">
-                    <select class="bseas-settings-input" id="bseas-s-pos-preset"><option value="top-left" ${bseas_panel_pos_preset === 'top-left' ? 'selected' : ''}>左上</option><option value="top-right" ${bseas_panel_pos_preset === 'top-right' ? 'selected' : ''}>右上</option><option value="bottom-left" ${bseas_panel_pos_preset === 'bottom-left' ? 'selected' : ''}>左下</option><option value="bottom-right" ${bseas_panel_pos_preset === 'bottom-right' ? 'selected' : ''}>右下</option></select>
-                </div>
-            </div>
-            <div class="bseas-settings-row">
-                <label class="bseas-settings-stack-label">浏览页单次加载字幕数量上限</label>
-                <input type="number" class="bseas-settings-input" id="bseas-s-max-preview" value="${bseas_max_preview_subtitles}" min="1">
-                <div class="bseas-settings-hint">为避免页面卡顿，浏览页单次最多渲染此数量的字幕，点击继续加载可以加载更多字幕。</div>
-            </div>
-            <div class="bseas-settings-row">
-                <label class="bseas-settings-stack-label">自动更新提醒</label>
-                <select class="bseas-settings-input" id="bseas-s-update-mode">
-                    <option value="always" ${bseas_update_mode === 'always' ? 'selected' : ''}>总是</option>
-                    <option value="reduced" ${bseas_update_mode === 'reduced' ? 'selected' : ''}>弱化</option>
-                    <option value="disabled" ${bseas_update_mode === 'disabled' ? 'selected' : ''}>禁用</option>
-                </select>
-                <div class="bseas-settings-hint">总是：检测到新版本即提醒；弱化：仅重大更新且间隔7天以上提醒；禁用：关闭所有更新提醒。</div>
-            </div>
         </div>
     </section>
+
+    <div class="bseas-settings-link-entry" id="bseas-goto-advanced">
+        <span class="bseas-settings-link-entry-label">查看高级选项</span>
+        <span class="bseas-settings-link-entry-arrow"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 5l7 7-7 7"/></svg></span>
+    </div>
 
     <div class="bseas-author-info"><div class="bseas-ext-links"><a href="${GITHUB_REPO_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>GitHub</a><a href="${GREASYFORK_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 1024 1024"><path d="M514.56 514.56m-486.4 0a486.4 486.4 0 1 0 972.8 0 486.4 486.4 0 1 0-972.8 0Z"/><path d="M389.376 249.856c102.0416 103.0144 103.9872 105.8816 99.1744 141.5168-3.84 37.5296-3.84 37.5296 172.3392 216.576 97.2288 98.2016 177.152 183.8592 177.152 190.6176 0 26.9312-21.1968 49.1008-45.2608 49.1008-20.224 0-62.5664-36.5568-204.0832-177.152-153.088-152.1152-181.9648-176.1792-196.4032-168.448-31.744 18.2784-57.7536 0.9728-159.7952-101.0688-76.0832-76.0832-98.2016-103.9872-93.3888-117.4528 5.7856-14.4384 19.2512-3.84 82.7904 58.7264L298.9056 418.304l21.1968-21.1968 21.1968-21.1968-75.1104-75.9808c-50.0736-51.0464-71.2192-77.9776-63.5392-82.7904 7.68-4.8128 38.5024 20.224 85.6576 66.4064L361.472 356.7104l22.1184-21.1968 21.1968-22.1184-73.1648-73.1648C268.0832 175.7184 250.7776 144.896 277.7088 144.896c3.84 0 53.9136 47.2064 111.6672 104.96z" fill="#FFFFFF"/></svg>Greasy Fork</a><a href="${SCRIPTCAT_URL}" target="_blank" rel="noopener noreferrer" class="bseas-ext-link"><svg viewBox="0 0 1024 1024" width="14" height="14"><path fill="currentColor" d="M501.333333 273.322667c-63.146667 0-69.461333 6.698667-102.144 6.698666C371.968 280.021333 290.218667 213.333333 249.386667 213.333333c-40.874667 0-88.533333 24.021333-88.533334 93.354667v80c0.085333 20.992 7.68 85.333333 37.546667 68.138667-35.285333 41.728-38.826667 90.410667-38.357333 137.514666-9.514667 2.730667-19.2 5.845333-28.629334 9.045334-29.184 9.984-60.16 22.698667-74.112 31.744a32 32 0 0 0 34.730667 53.76c6.656-4.309333 30.762667-14.933333 60.074667-24.96l9.728-3.2c1.962667 18.474667 6.869333 35.413333 14.165333 50.773333l-1.024 0.554667c-17.493333 9.216-33.706667 19.84-44.032 26.581333l-4.821333 3.157333a32 32 0 1 0 34.730666 53.76l5.589334-3.669333c10.453333-6.826667 23.850667-15.573333 38.442666-23.253333 3.413333-1.834667 6.698667-3.456 9.856-4.949334C288.554667 830.933333 421.12 853.333333 501.333333 853.333333s212.778667-22.4 286.592-91.648c3.157333 1.493333 6.4 3.114667 9.856 4.949334 14.592 7.68 27.989333 16.426667 38.442667 23.253333l5.589333 3.669333a32 32 0 0 0 34.730667-53.76l-4.821333-3.157333a555.008 555.008 0 0 0-44.032-26.581333l-1.024-0.554667c7.296-15.36 12.202667-32.298667 14.165333-50.773333l9.728 3.2c29.312 10.026667 53.418667 20.650667 60.117333 24.96a32 32 0 0 0 34.688-53.76c-13.952-9.045333-44.928-21.76-74.069333-31.744-9.429333-3.2-19.157333-6.314667-28.672-9.088 0.512-47.104-3.072-95.744-38.4-137.472 29.866667 17.194667 37.546667-47.146667 37.589333-68.181334V306.688C841.813333 237.354667 794.154667 213.333333 753.28 213.333333c-40.832 0-122.581333 66.688-149.76 66.688-32.725333 0-39.04-6.698667-102.186667-6.698666z"/></svg>脚本猫</a></div><p class="bseas-author-text">作者: <a href="https://github.com/LiuMashiro" target="_blank" class="bseas-author-link">LiuMashiro</a> · 当前版本: v${SCRIPT_VERSION}${updateBadgeHtml}</p></div>
             <div style="display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:6px; margin-top:2px;">
@@ -2723,6 +2755,106 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             <div style="display:flex; align-items:center; justify-content:center; gap:12px; margin-top:8px; font-size:12px;">
                 <a href="https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/blob/main/LEGAL.md" target="_blank" rel="noopener noreferrer" class="bseas-disclaimer-link" id="bseas-show-disclaimer">说明</a>
             </div>
+    </div>
+
+    <div class="bseas-settings-page" id="bseas-settings-advanced" style="display:none;">
+        <div class="bseas-settings-back" id="bseas-back-to-main">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            <span>返回</span>
+        </div>
+        <section class="bseas-settings-section">
+            <div class="bseas-settings-section-title">AI</div>
+            <div class="bseas-settings-card">
+                <div class="bseas-settings-row inline">
+                    <div class="bseas-settings-row-content">
+                        <div class="bseas-settings-row-label">省 Tokens 模式（不推荐）</div>
+                        <div class="bseas-settings-row-desc">通过压缩提示词、提前检测常见广告、压缩结果实现，将降低生成质量和广告识别精度，不建议开启</div>
+                    </div>
+                    <div class="bseas-settings-row-action">
+                        <label class="bseas-toggle">
+                            <input type="checkbox" id="bseas-s-save-tokens" ${bseas_save_tokens ? 'checked' : ''}>
+                            <span class="bseas-toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="bseas-settings-row inline">
+                    <div class="bseas-settings-row-content">
+                        <div class="bseas-settings-row-label">AI 总结详细程度</div>
+                    </div>
+                    <div class="bseas-settings-row-action">
+                        <select class="bseas-settings-input" id="bseas-s-detail">${detailOptions}</select>
+                    </div>
+                </div>
+                <div class="bseas-settings-row inline">
+                    <div class="bseas-settings-row-content">
+                        <div class="bseas-settings-row-label">启用二次确认</div>
+                        <div class="bseas-settings-row-desc">启用后，当字数超过限制时，AI 处理前将向您二次确认，以免浪费 Tokens。</div>
+                    </div>
+                    <div class="bseas-settings-row-action">
+                        <label class="bseas-toggle">
+                            <input type="checkbox" id="bseas-s-confirm-enable" ${bseas_confirm_enabled ? 'checked' : ''}>
+                            <span class="bseas-toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="bseas-settings-row">
+                    <label class="bseas-settings-stack-label">二次确认字数阈值</label>
+                    <input type="number" class="bseas-settings-input" id="bseas-s-confirm-chars" value="${bseas_confirm_chars}" min="1000" ${!bseas_confirm_enabled ? 'disabled' : ''}>
+                    <div class="bseas-settings-hint">此处字数包括时间戳。</div>
+                </div>
+                <div class="bseas-settings-row inline">
+                    <div class="bseas-settings-row-content">
+                        <div class="bseas-settings-row-label">广告自动跳过</div>
+                        <div class="bseas-settings-row-desc">开启后检测到广告时段将自动跳过。关闭后仅在进度条标黄提示，不自动跳转。</div>
+                        <div class="bseas-settings-hint">广告跳过功能仅在 AI 分析后可用。</div>
+                    </div>
+                    <div class="bseas-settings-row-action">
+                        <label class="bseas-toggle">
+                            <input type="checkbox" id="bseas-s-auto-skip" ${bseas_auto_skip_ad ? 'checked' : ''}>
+                            <span class="bseas-toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="bseas-settings-row">
+                    <label class="bseas-settings-stack-label">获取评论数上限</label>
+                    <input type="number" class="bseas-settings-input" id="bseas-s-opinion-count" value="${bseas_opinion_comments_count}" min="0" max="100">
+                    <div class="bseas-settings-hint">获取的评论数可能会小于但不会超过此限制</div>
+                </div>
+            </div>
+        </section>
+        <section class="bseas-settings-section">
+            <div class="bseas-settings-section-title">面板</div>
+            <div class="bseas-settings-card">
+                <div class="bseas-settings-row">
+                    <label class="bseas-settings-stack-label">自动打开面板时的标签页</label>
+                    <select class="bseas-settings-input" id="bseas-s-auto-tab" ${!bseas_auto_open_panel ? 'disabled' : ''}>${tabOptions}</select>
+                </div>
+                <div class="bseas-settings-row inline">
+                    <div class="bseas-settings-row-content">
+                        <div class="bseas-settings-row-label">按钮默认位置</div>
+                        <div class="bseas-settings-row-desc">拖动按钮和面板以改变位置</div>
+                    </div>
+                    <div class="bseas-settings-row-action">
+                        <select class="bseas-settings-input" id="bseas-s-pos-preset"><option value="top-left" ${bseas_panel_pos_preset === 'top-left' ? 'selected' : ''}>左上</option><option value="top-right" ${bseas_panel_pos_preset === 'top-right' ? 'selected' : ''}>右上</option><option value="bottom-left" ${bseas_panel_pos_preset === 'bottom-left' ? 'selected' : ''}>左下</option><option value="bottom-right" ${bseas_panel_pos_preset === 'bottom-right' ? 'selected' : ''}>右下</option></select>
+                    </div>
+                </div>
+                <div class="bseas-settings-row">
+                    <label class="bseas-settings-stack-label">浏览页单次加载字幕数量上限</label>
+                    <input type="number" class="bseas-settings-input" id="bseas-s-max-preview" value="${bseas_max_preview_subtitles}" min="1">
+                    <div class="bseas-settings-hint">为避免页面卡顿，浏览页单次最多渲染此数量的字幕，点击继续加载可以加载更多字幕。</div>
+                </div>
+                <div class="bseas-settings-row">
+                    <label class="bseas-settings-stack-label">自动更新提醒</label>
+                    <select class="bseas-settings-input" id="bseas-s-update-mode">
+                        <option value="always" ${bseas_update_mode === 'always' ? 'selected' : ''}>总是</option>
+                        <option value="reduced" ${bseas_update_mode === 'reduced' ? 'selected' : ''}>弱化</option>
+                        <option value="disabled" ${bseas_update_mode === 'disabled' ? 'selected' : ''}>禁用</option>
+                    </select>
+                    <div class="bseas-settings-hint">总是：检测到新版本即提醒；弱化：仅重大更新且间隔 7 天以上提醒；禁用：关闭所有更新提醒。</div>
+                </div>
+            </div>
+        </section>
+    </div>
         </div>`);
         const pSelect = document.getElementById('bseas-s-platform');
         const urlWrapper = document.getElementById('bseas-url-wrapper');
@@ -2752,10 +2884,16 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             autoTabSelect.disabled = !autoOpenCheckbox.checked;
             if (autoTabSelect.disabled) {
                 autoTabSelect.classList.add('disabled-setting');
+                autoTabSelect.title = '此选项在「自动打开面板」未启用时不可用';
             } else {
                 autoTabSelect.classList.remove('disabled-setting');
+                autoTabSelect.title = '';
             }
         });
+        if (autoTabSelect.disabled) {
+            autoTabSelect.classList.add('disabled-setting');
+            autoTabSelect.title = '此选项在「自动打开面板」未启用时不可用';
+        }
         // API 禁用开关
         const disableApiCheckbox = document.getElementById('bseas-s-disable-api');
         const apiInputs = [
@@ -2769,12 +2907,17 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             apiInputs.forEach(el => {
                 if (el) {
                     el.disabled = disabled;
-                    if (disabled) el.classList.add('disabled-setting');
-                    else el.classList.remove('disabled-setting');
+                    if (disabled) { el.classList.add('disabled-setting'); el.title = '此选项在「禁用 API」启用时不可用'; }
+                    else { el.classList.remove('disabled-setting'); el.title = ''; }
                 }
             });
             const autoSkipCheckbox = document.getElementById('bseas-s-auto-skip');
-            if (autoSkipCheckbox) autoSkipCheckbox.disabled = disabled;
+            if (autoSkipCheckbox) {
+                autoSkipCheckbox.disabled = disabled;
+                const autoSkipLabel = autoSkipCheckbox.closest('.bseas-toggle');
+                const tipText = disabled ? '此选项在「禁用 API」启用时不可用' : '';
+                if (autoSkipLabel) autoSkipLabel.title = tipText;
+            }
         }
         if (disableApiCheckbox) {
             toggleApiSettings(disableApiCheckbox.checked);
@@ -2785,8 +2928,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const confirmCharsInput = document.getElementById('bseas-s-confirm-chars');
         function toggleConfirmThreshold(enabled) {
             confirmCharsInput.disabled = !enabled;
-            if (!enabled) confirmCharsInput.classList.add('disabled-setting');
-            else confirmCharsInput.classList.remove('disabled-setting');
+            if (!enabled) { confirmCharsInput.classList.add('disabled-setting'); confirmCharsInput.title = '此选项在「启用二次确认」未启用时不可用'; }
+            else { confirmCharsInput.classList.remove('disabled-setting'); confirmCharsInput.title = ''; }
         }
         if (confirmEnableCheckbox) {
             toggleConfirmThreshold(confirmEnableCheckbox.checked);
@@ -2802,12 +2945,19 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             const opinionOff = !opinionCheckbox || !opinionCheckbox.checked;
             return saveTokensOn || opinionOff;
         }
+        function opinionCountDisabledReason() {
+            const saveTokensOn = saveTokensCheckbox && saveTokensCheckbox.checked;
+            const opinionOff = !opinionCheckbox || !opinionCheckbox.checked;
+            if (saveTokensOn) return '此选项在「省 Tokens 模式」启用时不可用';
+            if (opinionOff) return '此选项在「舆论分析」未启用时不可用';
+            return '';
+        }
         function applyOpinionCountDisabled() {
             if (!opinionCountInput) return;
             const disabled = opinionCountShouldBeDisabled();
             opinionCountInput.disabled = disabled;
-            if (disabled) opinionCountInput.classList.add('disabled-setting');
-            else opinionCountInput.classList.remove('disabled-setting');
+            if (disabled) { opinionCountInput.classList.add('disabled-setting'); opinionCountInput.title = opinionCountDisabledReason(); }
+            else { opinionCountInput.classList.remove('disabled-setting'); opinionCountInput.title = ''; }
         }
         function toggleDetailForSaveTokens(saveTokens) {
             if (saveTokens) {
@@ -2823,10 +2973,12 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     detailSelect.value = 'minimal';
                     detailSelect.disabled = true;
                     detailSelect.classList.add('disabled-setting');
+                    detailSelect.title = '此选项在「省 Tokens 模式」启用时不可用';
                 } else {
                     detailSelect.value = bseas_detail_level;
                     detailSelect.disabled = false;
                     detailSelect.classList.remove('disabled-setting');
+                    detailSelect.title = '';
                 }
             }
             if (opinionCountInput) {
@@ -2834,6 +2986,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     opinionCountInput.value = 10;
                     opinionCountInput.disabled = true;
                     opinionCountInput.classList.add('disabled-setting');
+                    opinionCountInput.title = '此选项在「省 Tokens 模式」启用时不可用';
                 } else {
                     opinionCountInput.value = bseas_opinion_comments_count;
                     applyOpinionCountDisabled();
@@ -2859,10 +3012,35 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         mSelect.addEventListener('change', updateModelCustom);
         updateUIForPlatform(true);
         document.getElementById('bseas-api-hint-btn')?.addEventListener('click', () => {
-            const box = document.getElementById('bseas-api-hint-box');
+            const collapse = document.getElementById('bseas-api-hint-collapse');
             const btn = document.getElementById('bseas-api-hint-btn');
-            if (box.style.display === 'none') { box.style.display = 'block'; btn.textContent = '收起提示'; }
-            else { box.style.display = 'none'; btn.textContent = '查看使用提示'; }
+            if (!collapse || !btn) return;
+            const isOpen = collapse.classList.toggle('open');
+            btn.textContent = isOpen ? '收起提示' : '查看使用提示';
+        });
+        document.getElementById('bseas-goto-advanced')?.addEventListener('click', () => {
+            const main = document.getElementById('bseas-settings-main');
+            const adv = document.getElementById('bseas-settings-advanced');
+            if (!main || !adv) return;
+            main.style.display = 'none';
+            adv.style.display = 'block';
+            adv.classList.remove('back');
+            void adv.offsetWidth;
+            const content = adv.closest('.bseas-content');
+            if (content) content.scrollTop = 0;
+        });
+        document.getElementById('bseas-back-to-main')?.addEventListener('click', () => {
+            const main = document.getElementById('bseas-settings-main');
+            const adv = document.getElementById('bseas-settings-advanced');
+            if (!main || !adv) return;
+            adv.style.display = 'none';
+            adv.classList.add('back');
+            main.style.display = 'block';
+            main.classList.remove('bseas-main-anim');
+            void main.offsetWidth;
+            main.classList.add('bseas-main-anim');
+            const content = main.closest('.bseas-content');
+            if (content) content.scrollTop = content.scrollHeight;
         });
         updateStorageUsageDisplay();
         document.getElementById('bseas-clear-cache')?.addEventListener('click', () => {
@@ -2899,6 +3077,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         abortCurrentRequest();
         currentGenerationId++;
         isGeneratingAI = false;
+        currentStreamText = '';
+        currentFollowupQ = null;
+        currentFollowupText = '';
         progressMarkInitialized = false;
         lastAdCheckResult = null; adDetectionNotified = false;
         currentVideoKey = null;
