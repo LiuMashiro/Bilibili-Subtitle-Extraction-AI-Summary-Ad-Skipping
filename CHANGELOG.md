@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - 编辑字幕页点击取消或保存后把主面板窗口一并关闭的问题
+- 生成AI分析时，切换标签页将导致流式输出失效（降级为普通输出）的问题
 
 ## [2.2.2]
 
