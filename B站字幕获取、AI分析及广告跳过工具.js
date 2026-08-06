@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.3.0
+// @version      2.4.0
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -33,14 +33,13 @@
 // @require      https://cdn.jsdelivr.net/npm/pinyin-pro@3.28.1/dist/index.js
 // @resource     KATEX_CSS https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
 // @run-at       document-idle
-// @downloadURL none
 // ==/UserScript==
 
 (function () {
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.3.0';
+    const SCRIPT_VERSION = '2.4.0';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -234,6 +233,7 @@
         if (t == null) return '';
         return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
+    const ASK_ICON_SVG = '<svg class="bseas-qa-icon" viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>';
     let katexCSSInjected = false;
     function injectKatexCSS() {
         if (katexCSSInjected) return;
@@ -274,14 +274,14 @@
             --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
         }
         * { font-family: -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif !important; }
-        .bseas-container { position:fixed; z-index:100000; }
+        .bseas-container { position:fixed; z-index:100010; }
         .bseas-trigger-btn {
             width: 60px; height: 60px;
             border-radius: 20px;
-            background: rgba(255,255,255,0.82);
-            backdrop-filter: blur(6px) saturate(140%);
-            -webkit-backdrop-filter: blur(6px) saturate(140%);
-            border: 1px solid rgba(255,255,255,0.7);
+            background: rgba(255,255,255,0.62);
+            backdrop-filter: blur(8px) saturate(140%);
+            -webkit-backdrop-filter: blur(8px) saturate(140%);
+            border: 1px solid rgba(255,255,255,0.6);
             cursor: grab;
             box-shadow:
                 0 8px 24px rgba(0,0,0,0.12),
@@ -296,14 +296,15 @@
         .bseas-trigger-btn:active { cursor:grabbing; }
         .bseas-trigger-btn:hover {
             transform: translateY(-3px) scale(1.06);
-            background: rgba(255,255,255,0.90);
+            background: rgba(255,255,255,0.8);
             box-shadow:
                 0 22px 52px rgba(0,0,0,0.18),
                 0 6px 14px rgba(0,0,0,0.07),
                 inset 0 1px 0 rgba(255,255,255,0.95);
         }
         .bseas-trigger-btn:active { transform: scale(0.94); }
-        .bseas-trigger-btn svg { width:26px; height:26px; fill: var(--bseas-primary); transition: transform 0.55s var(--ease-spring); pointer-events:none; filter: drop-shadow(0 1px 2px rgba(0,174,236,0.25)); }
+        .bseas-trigger-btn svg { width:26px; height:26px; fill: var(--bseas-primary); transition: transform 0.55s var(--ease-spring), fill 0.3s; pointer-events:none; filter: drop-shadow(0 1px 2px rgba(0,174,236,0.25)); }
+        .bseas-trigger-btn.on-dark svg { fill:#fff; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3)); }
         .bseas-trigger-btn:hover svg { transform: scale(1.15); }
         .bseas-trigger-btn::after {
             content:''; position:absolute; inset:-2px; border-radius:22px;
@@ -336,10 +337,14 @@
         .bseas-panel.show { display:flex; }
         .bseas-panel.hiding { animation:bseas-panel-out 0.22s var(--ease-standard) forwards; }
         .bseas-panel.no-transition { transition:none !important; }
+        .bseas-resize-edge { position:absolute; z-index:40; pointer-events:auto; }
+        .bseas-resize-edge.left { left:0; top:0; width:6px; height:100%; cursor:ew-resize; }
+        .bseas-resize-edge.right { right:0; top:0; width:6px; height:100%; cursor:ew-resize; }
+        .bseas-resize-edge.bottom { left:6px; right:6px; bottom:0; height:4px; cursor:ns-resize; }
+        .bseas-resize-edge:hover { background:rgba(0,174,236,0.12); }
         .bseas-header { padding:10px 22px 6px; border-bottom:1px solid var(--bseas-border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
         .bseas-header-text { cursor:move; flex:1; min-width:0; }
-        .bseas-title { font-size:16px; font-weight:700; color:var(--bseas-text); margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-        .bseas-platform-tag { display:inline-block; padding:3px 8px; background:rgba(0,174,236,0.1); color:var(--bseas-primary); font-size:11px; font-weight:700; border-radius:6px; }
+        .bseas-title { font-size:16px; font-weight:700; color:var(--bseas-text); margin:0; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .bseas-subtitle-info { font-size:13px; color:var(--bseas-text-dim); margin-top:2px; font-weight:500; transition:color 0.3s; }
         .bseas-ad-hint { font-size:12px; color:var(--bseas-text-muted); margin-top:1px; font-weight:400; display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
         .bseas-header-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
@@ -362,7 +367,7 @@
         .bseas-correct-op.loading { opacity:0.6; pointer-events:none; }
         .bseas-correct-op.disabled { opacity:0.45; filter:grayscale(60%); cursor:not-allowed; }
         .bseas-correct-progress { position:absolute; left:0; top:0; height:100%; width:0%; background:rgba(255,255,255,0.25); pointer-events:none; }
-        .bseas-edit-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:100000; display:flex; align-items:center; justify-content:center; animation:bseas-fadein 0.2s ease; }
+        .bseas-edit-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:100020; display:flex; align-items:center; justify-content:center; animation:bseas-fadein 0.2s ease; }
         .bseas-edit-overlay.closing { animation:bseas-fadeout 0.2s ease forwards; }
         @keyframes bseas-fadein { from{opacity:0} to{opacity:1} }
         @keyframes bseas-fadeout { from{opacity:1} to{opacity:0} }
@@ -372,16 +377,93 @@
         @keyframes bseas-edit-modal-out { from{opacity:1; transform:none} to{opacity:0; transform:translateY(-60px) scale(0.96)} }
         .bseas-edit-modal-header { padding:14px 20px; font-size:16px; font-weight:600; color:var(--bseas-text); border-bottom:1px solid var(--bseas-border); display:flex; align-items:center; justify-content:space-between; }
         .bseas-edit-modal-body { flex:1; overflow-y:auto; padding:8px 20px; }
-        .bseas-edit-entry { display:flex; gap:10px; padding:8px 0; border-bottom:1px solid rgba(0,0,0,0.05); align-items:flex-start; }
+        .bseas-edit-entry { display:flex; gap:8px; padding:8px 0; border-bottom:1px solid rgba(0,0,0,0.05); align-items:flex-start; }
+        .bseas-edit-times { display:flex; align-items:center; gap:4px; flex-shrink:0; margin-top:2px; }
+        .bseas-edit-time { width:62px; border:1px solid var(--bseas-border); border-radius:6px; padding:4px 5px; font-size:12px; color:var(--bseas-primary); font-family:monospace; font-weight:700; background:rgba(0,174,236,0.06); text-align:center; transition:border-color 0.2s, box-shadow 0.2s; }
+        .bseas-edit-time:focus { outline:none; border-color:var(--bseas-primary); box-shadow:0 0 0 2px rgba(0,174,236,0.12); background:#fff; }
+        .bseas-edit-arrow { color:var(--bseas-text-muted); display:flex; align-items:center; }
+        .bseas-edit-arrow svg { width:14px; height:14px; fill:currentColor; }
+        .bseas-edit-actions { display:flex; flex-direction:column; gap:4px; flex-shrink:0; margin-top:2px; }
+        .bseas-edit-add { width:30px; height:26px; border:none; border-radius:6px; background:rgba(0,174,236,0.1); color:var(--bseas-primary); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s; }
+        .bseas-edit-add:hover { background:rgba(0,174,236,0.22); transform:scale(1.05); }
+        .bseas-edit-add svg { width:16px; height:16px; fill:currentColor; }
+        .bseas-edit-del { width:30px; height:30px; border:none; border-radius:6px; background:rgba(239,68,68,0.08); color:#ef4444; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s; }
+        .bseas-edit-del:hover { background:rgba(239,68,68,0.18); transform:scale(1.05); }
+        .bseas-edit-del svg { width:16px; height:16px; fill:currentColor; }
         .bseas-edit-ts { font-size:12px; color:var(--bseas-primary); font-family:monospace; font-weight:700; background:rgba(0,174,236,0.06); padding:4px 6px; border-radius:4px; flex-shrink:0; min-width:90px; text-align:center; margin-top:2px; }
         .bseas-edit-textarea { flex:1; border:1px solid var(--bseas-border); border-radius:6px; padding:8px 10px; font-size:15px; color:var(--bseas-text); resize:vertical; min-height:38px; font-family:inherit; transition:border-color 0.2s; line-height:1.5; }
         .bseas-edit-textarea:focus { outline:none; border-color:var(--bseas-primary); box-shadow:0 0 0 2px rgba(0,174,236,0.1); }
+        .bseas-edit-toolbar { display:flex; gap:8px; padding:10px 20px; border-bottom:1px solid var(--bseas-border); flex-wrap:wrap; align-items:center; }
+        .bseas-edit-tool-btn { display:inline-flex; align-items:center; gap:5px; padding:6px 12px; border:1px solid var(--bseas-border); border-radius:8px; background:#fff; color:var(--bseas-text); font-size:13px; font-weight:500; cursor:pointer; transition:all 0.2s; }
+        .bseas-edit-tool-btn:hover { border-color:var(--bseas-primary); color:var(--bseas-primary); transform:translateY(-1px); }
+        .bseas-edit-tool-btn svg { width:15px; height:15px; fill:currentColor; }
+        .bseas-edit-findbar { display:none; flex-direction:column; gap:6px; padding:10px 20px; background:var(--bseas-bg-card); border-bottom:1px solid var(--bseas-border); }
+        .bseas-edit-findbar.open { display:flex; }
+        .bseas-edit-find-row { display:flex; gap:6px; align-items:center; }
+        .bseas-edit-find-input { flex:1; border:1px solid var(--bseas-border); border-radius:6px; padding:6px 10px; font-size:13px; color:var(--bseas-text); background:#fff; transition:border-color 0.2s; min-width:0; }
+        .bseas-edit-find-input:focus { outline:none; border-color:var(--bseas-primary); box-shadow:0 0 0 2px rgba(0,174,236,0.1); }
+        .bseas-edit-find-btn { padding:6px 10px; border:none; border-radius:6px; background:var(--bseas-primary); color:#fff; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s; white-space:nowrap; }
+        .bseas-edit-find-btn:hover { background:var(--bseas-primary-hover); }
+        .bseas-edit-find-btn.secondary { background:rgba(120,120,128,0.12); color:var(--bseas-text); }
+        .bseas-edit-find-btn.secondary:hover { background:rgba(120,120,128,0.2); }
+        .bseas-edit-find-count { font-size:12px; color:var(--bseas-text-muted); white-space:nowrap; }
         .bseas-edit-modal-footer { padding:12px 20px; border-top:1px solid var(--bseas-border); display:flex; justify-content:flex-end; gap:10px; }
-        .bseas-edit-modal-btn { padding:6px 18px; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; border:none; transition:all 0.2s; }
+        .bseas-edit-modal-btn { padding:6px 18px; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; border:none; transition:all 0.2s; display:inline-flex; align-items:center; gap:5px; }
+        .bseas-edit-modal-btn svg { width:15px; height:15px; fill:currentColor; flex-shrink:0; }
         .bseas-edit-modal-btn.cancel { background:rgba(120,120,128,0.08); color:var(--bseas-text); }
         .bseas-edit-modal-btn.cancel:hover { background:rgba(120,120,128,0.15); }
         .bseas-edit-modal-btn.save { background:var(--bseas-primary); color:white; }
         .bseas-edit-modal-btn.save:hover { transform:translateY(-1px); box-shadow:0 2px 8px rgba(0,174,236,0.3); }
+        .bseas-dl-format-group { display:flex; flex-direction:column; gap:10px; }
+        .bseas-dl-option { display:flex; align-items:flex-start; gap:10px; padding:12px; border:1.5px solid var(--bseas-border); border-radius:10px; cursor:pointer; transition:all 0.2s; }
+        .bseas-dl-option:hover { border-color:var(--bseas-primary); background:rgba(0,174,236,0.03); }
+        .bseas-dl-option input[type="radio"] { appearance:none; -webkit-appearance:none; width:20px; height:20px; border:1.5px solid #cbd5e1; border-radius:50%; cursor:pointer; margin:0; flex-shrink:0; transition:border-color 0.2s, background-color 0.2s, box-shadow 0.2s; position:relative; background:#fff; outline:none; margin-top:1px; }
+        .bseas-dl-option input[type="radio"]:hover { border-color:var(--bseas-primary); box-shadow:0 0 0 3px rgba(0,174,236,0.12); }
+        .bseas-dl-option input[type="radio"]:checked { background:#fff; border-color:var(--bseas-primary); }
+        .bseas-dl-option input[type="radio"]:checked::after { content:''; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; border-radius:50%; background:var(--bseas-primary); }
+        .bseas-dl-option.checked { border-color:var(--bseas-primary); background:rgba(0,174,236,0.06); }
+        .bseas-dl-option-content { display:flex; flex-direction:column; gap:2px; }
+        .bseas-dl-option-title { font-size:14px; font-weight:600; color:var(--bseas-text); }
+        .bseas-dl-option-desc { font-size:12px; color:var(--bseas-text-muted); }
+        .bseas-dl-ts-row { display:flex; align-items:center; justify-content:space-between; margin-top:16px; padding:10px 12px; background:var(--bseas-bg-card); border-radius:8px; }
+        .bseas-dl-ts-label { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:500; color:var(--bseas-text); cursor:pointer; user-select:none; transition:color 0.2s; }
+        .bseas-dl-ts-label:hover { color:var(--bseas-primary); }
+        .bseas-dl-ts-label input[type="checkbox"] { appearance:none; -webkit-appearance:none; width:20px; height:20px; border:1.5px solid #cbd5e1; border-radius:6px; cursor:pointer; margin:0; flex-shrink:0; transition:border-color 0.2s, background-color 0.2s, box-shadow 0.2s; position:relative; background:#fff; outline:none; }
+        .bseas-dl-ts-label input[type="checkbox"]:hover { border-color:var(--bseas-primary); box-shadow:0 0 0 3px rgba(0,174,236,0.12); }
+        .bseas-dl-ts-label input[type="checkbox"]:checked { background:var(--bseas-primary); border-color:var(--bseas-primary); background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:center; background-size:13px 13px; }
+        .bseas-dl-ts-hint { font-size:11px; color:var(--bseas-text-muted); }
+        .bseas-play-toast { position:fixed; left:50%; bottom:11%; transform:translateX(-50%); background:rgba(0,0,0,0.72); color:#fff; padding:10px 28px; border-radius:10px; font-size:19px; line-height:1.5; text-align:center; max-width:82%; z-index:100005; pointer-events:none; backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); transition:opacity 0.25s ease; text-shadow:0 1px 3px rgba(0,0,0,0.5); }
+        .bseas-play-toast.empty { opacity:0; }
+        .bseas-play-line2 { font-size:15px; opacity:0.85; margin-top:5px; }
+        .bseas-play-ctrl { position:fixed; right:24px; bottom:24px; z-index:100002; display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.6); padding:8px 14px; border-radius:22px; backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+        .bseas-play-ctrl select { background:rgba(255,255,255,0.15); color:#fff; border:1px solid rgba(255,255,255,0.3); border-radius:6px; padding:4px 8px; font-size:12px; outline:none; cursor:pointer; }
+        .bseas-play-ctrl select option { color:#000; }
+        .bseas-play-ctrl button { background:none; border:none; color:#fff; cursor:pointer; padding:4px; display:flex; align-items:center; border-radius:50%; transition:background 0.2s; }
+        .bseas-play-ctrl button:hover { background:rgba(255,255,255,0.15); }
+        .bseas-play-ctrl button svg { width:18px; height:18px; fill:currentColor; }
+        .bseas-play-guide { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:white; border-radius:14px; padding:24px 28px; z-index:100030; box-shadow:0 8px 40px rgba(0,0,0,0.25); max-width:420px; width:90%; animation:bseas-play-guide-in 0.2s var(--ease-out); }
+        @keyframes bseas-play-guide-in { from{opacity:0} to{opacity:1} }
+        .bseas-play-guide.closing { animation:bseas-play-guide-out 0.2s var(--ease-out) forwards; }
+        @keyframes bseas-play-guide-out { from{opacity:1} to{opacity:0} }
+        .bseas-play-guide-title { font-size:17px; font-weight:700; color:var(--bseas-text); margin-bottom:6px; text-align:center; }
+        .bseas-play-guide-desc { font-size:12px; color:var(--bseas-text-muted); line-height:1.5; margin-bottom:16px; text-align:center; }
+        .bseas-play-guide-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:10px; }
+        .bseas-play-guide-label { font-size:13px; font-weight:600; color:var(--bseas-text); flex-shrink:0; }
+        .bseas-play-guide select { border:1px solid var(--bseas-border); border-radius:6px; padding:5px 8px; font-size:13px; color:var(--bseas-text); background:#fff; outline:none; cursor:pointer; min-width:120px; }
+        .bseas-play-guide select:focus { border-color:var(--bseas-primary); }
+        .bseas-play-guide-slider { display:flex; align-items:center; gap:8px; flex:1; }
+        .bseas-play-guide-slider input[type="range"] { flex:1; -webkit-appearance:none; appearance:none; height:5px; border-radius:3px; background:rgba(0,174,236,0.2); outline:none; cursor:pointer; }
+        .bseas-play-guide-slider input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:50%; background:var(--bseas-primary); cursor:pointer; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,174,236,0.4); }
+        .bseas-play-guide-slider input[type="range"]::-moz-range-thumb { width:16px; height:16px; border-radius:50%; background:var(--bseas-primary); cursor:pointer; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,174,236,0.4); }
+        .bseas-play-guide-slider input[type="range"]::-moz-range-track { height:5px; border-radius:3px; background:rgba(0,174,236,0.2); }
+        .bseas-play-guide-slider span { font-size:12px; color:var(--bseas-text-muted); min-width:32px; text-align:right; }
+        .bseas-play-guide-btns { display:flex; gap:10px; justify-content:center; margin-top:16px; }
+        .bseas-follow-btn { position:absolute; right:16px; bottom:112px; width:38px; height:38px; border-radius:50%; background:#fff; color:var(--bseas-primary); border:1px solid var(--bseas-border); cursor:pointer; display:none; align-items:center; justify-content:center; box-shadow:0 1px 6px rgba(0,0,0,0.06); z-index:30; transition:all 0.2s; }
+        .bseas-follow-btn:hover { transform:scale(1.1); box-shadow:0 2px 8px rgba(0,0,0,0.08); border-color:#cbd5e1; }
+        .bseas-follow-btn.active { background:var(--bseas-primary); color:#fff; border-color:var(--bseas-primary); box-shadow:0 2px 12px rgba(0,174,236,0.3); animation:bseas-follow-pulse 2s ease-in-out infinite; }
+        .bseas-follow-btn svg { width:12px; height:12px; fill:currentColor; transform:translateX(1px); }
+        @keyframes bseas-follow-pulse { 0%,100%{box-shadow:0 2px 16px rgba(0,174,236,0.4)} 50%{box-shadow:0 2px 24px rgba(0,174,236,0.6)} }
+        .bseas-subtitle-item.current-follow { background:rgba(0,174,236,0.1); border-radius:6px; transition:background 0.3s ease; }
         .bseas-search-clear { position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:var(--bseas-text-muted); display:none; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; }
         .bseas-search-clear:hover { background:rgba(0,0,0,0.08); color:var(--bseas-text); }
         .bseas-search-icon { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--bseas-text-muted); pointer-events:none; display:flex; }
@@ -409,6 +491,8 @@
         .bseas-source-body { padding:4px 22px 14px; display:flex; flex-wrap:wrap; gap:8px; }
         .bseas-source-body.hidden { display:none; }
         .bseas-subtitle-option { padding:6px 14px; background:white; border:1px solid var(--bseas-border); border-radius:20px; color:var(--bseas-text); font-size:13px; font-weight:500; cursor:pointer; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); display:flex; align-items:center; gap:6px; position:relative; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
+        .bseas-subtitle-del { display:flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; color:#ef4444; opacity:0.4; transition:all 0.2s; cursor:pointer; margin-left:auto; }
+        .bseas-subtitle-del:hover { opacity:1; background:rgba(239,68,68,0.12); }
         .bseas-subtitle-option::before { content:''; position:absolute; top:0; left:0; width:0; height:100%; background:var(--bseas-primary); opacity:0.08; transition:width 0.3s ease; }
         .bseas-subtitle-option:hover { border-color:var(--bseas-primary); transform:translateY(-2px); box-shadow:0 4px 14px rgba(0,174,236,0.15); }
         .bseas-subtitle-option:hover::before { width:100%; }
@@ -420,6 +504,8 @@
         .bseas-subtitle-option:not(.active) .bseas-tag.ai { background:rgba(0,174,236,0.1); color:var(--bseas-primary); }
         .bseas-subtitle-option:not(.active) .bseas-tag.cc { background:rgba(16,185,129,0.1); color:#10b981; }
         .bseas-subtitle-option.active .bseas-tag { background:rgba(255,255,255,0.2); color:white; }
+        .bseas-subtitle-option.active .bseas-subtitle-del { color:#fff; opacity:0.65; }
+        .bseas-subtitle-option.active .bseas-subtitle-del:hover { opacity:1; background:rgba(255,255,255,0.18); }
         .bseas-tabs { display:flex; margin:11px 22px 11px; gap:4px; flex-shrink:0; }
         .bseas-tabs.hidden { display:none; }
         .bseas-tab { flex:1; padding:8px 0; border:none; background:transparent; color:var(--bseas-text-dim); font-size:13.5px; font-weight:600; cursor:pointer; border-radius:var(--bseas-radius-sm); transition:all 0.25s cubic-bezier(0.4,0,0.2,1); text-align:center; position:relative; overflow:hidden; }
@@ -529,7 +615,7 @@
         .bseas-sp-skip:hover { background:var(--bseas-ad-button-hover); transform:translateY(-2px) scale(1.02); box-shadow:0 4px 12px rgba(245,158,11,0.4); }
         .bseas-sp-skip:active { transform:translateY(0) scale(0.98); }
         .bseas-sp-hint { font-size:12px; color:#000000; margin-left:34px; }
-        .bseas-followup-section { margin-top:4px; background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:16px; transition:box-shadow 0.2s; }
+        .bseas-followup-section { margin-top:24px; background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:16px; transition:box-shadow 0.2s; }
         .bseas-followup-section:hover { box-shadow:0 4px 12px rgba(0,0,0,0.04); }
         .bseas-followup-label { font-size:13px; font-weight:700; color:var(--bseas-primary); margin-bottom:10px; display:flex; align-items:center; gap:6px; }
         .bseas-followup-input { width:100%; background:#f8fafc; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-sm); padding:12px 14px; color:var(--bseas-text); font-size:14px; margin-bottom:12px; resize:none; height:72px; box-sizing:border-box; transition:all 0.2s; }
@@ -538,9 +624,11 @@
         .bseas-followup-btn:hover:not(:disabled) { background:var(--bseas-primary-hover); transform:translateY(-1px); }
         .bseas-followup-btn:disabled { opacity:0.5; cursor:not-allowed; }
         .bseas-qa-item { margin-top:16px; padding-top:16px; border-top:1px solid var(--bseas-border); }
-        .bseas-qa-q { font-size:14px; font-weight:700; color:var(--bseas-text); margin-bottom:10px; background:#f1f5f9; padding:10px 14px; border-radius:var(--bseas-radius-sm); transition:background 0.2s; }
+        .bseas-qa-q { font-size:14px; font-weight:700; color:var(--bseas-text); margin-bottom:10px; background:#f1f5f9; padding:10px 14px; border-radius:var(--bseas-radius-sm); transition:background 0.2s; display:flex; align-items:flex-start; gap:6px; line-height:1.5; }
         .bseas-qa-q:hover { background:#e2e8f0; }
-        .bseas-qa-a { font-size:14.5px; color:var(--bseas-text); line-height:1.7; padding:0 4px; }
+        .bseas-qa-icon { color:var(--bseas-primary); flex-shrink:0; margin-top:3px; }
+        .bseas-qa-a { background:white; border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); padding:16px 18px; font-size:14.5px; color:var(--bseas-text); line-height:1.7; transition:box-shadow 0.2s; }
+        .bseas-qa-a:hover { box-shadow:0 4px 12px rgba(0,0,0,0.04); }
         .bseas-noapi-box { background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-md); padding:16px; margin-bottom:16px; }
         .bseas-noapi-title { font-size:14px; font-weight:700; color:var(--bseas-warning-text); margin-bottom:8px; display:flex; align-items:center; gap:6px; }
         .bseas-noapi-desc { font-size:13px; color:var(--bseas-warning-text); line-height:1.6; margin-bottom:12px; }
@@ -603,7 +691,7 @@
         .bseas-author-link { color: var(--bseas-primary); text-decoration:none; font-weight:500; transition: color 0.2s; }
         .bseas-author-link:hover { color: var(--bseas-primary-hover); text-decoration: underline; }
         .bseas-footer {
-            padding:14px 22px;
+            padding:14px 22px 18px;
             background: rgba(255,255,255,0.72);
             backdrop-filter: blur(24px) saturate(180%);
             -webkit-backdrop-filter: blur(24px) saturate(180%);
@@ -612,6 +700,8 @@
             position:absolute; left:0; right:0; bottom:0; z-index:6;
         }
         .bseas-btn { flex:1; min-width:0; padding:12px 8px; border:0.5px solid var(--bseas-border); border-radius:var(--bseas-radius-md); font-size:13.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); position:relative; overflow:hidden; backdrop-filter:blur(8px) saturate(140%); -webkit-backdrop-filter:blur(8px) saturate(140%); }
+        .bseas-btn svg { width:15px; height:15px; fill:currentColor; flex-shrink:0; }
+        #bseas-play-btn svg { width:12px; height:12px; transform:translateX(1px); }
         .bseas-btn::before { content:''; position:absolute; top:0; left:-100%; width:100%; height:100%; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.1),transparent); transition:left 0.5s ease; }
         .bseas-btn:hover:not(:disabled)::before { left:100%; }
         .bseas-btn-primary { background:rgba(0,174,236,0.88); color:white; }
@@ -622,11 +712,11 @@
         .bseas-btn-secondary:hover:not(:disabled) { background:rgba(248,250,252,0.9); border-color:#cbd5e1; transform:translateY(-1px); box-shadow:0 2px 8px rgba(0,0,0,0.04); }
         .bseas-btn-secondary:active:not(:disabled) { transform:translateY(0); }
         .bseas-btn-secondary:disabled { opacity:0.5; cursor:not-allowed; }
-        .bseas-toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%) translateY(16px) scale(0.95); background:rgba(15,23,42,0.95); color:white; padding:12px 24px; border-radius:12px; font-size:14px; font-weight:500; opacity:0; transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.16,1,0.3,1); z-index:100001; pointer-events:none; white-space:nowrap; max-width:80vw; }
+        .bseas-toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%) translateY(16px) scale(0.95); background:rgba(15,23,42,0.68); backdrop-filter:blur(8px) saturate(140%); -webkit-backdrop-filter:blur(8px) saturate(140%); color:white; padding:12px 24px; border-radius:12px; font-size:14px; font-weight:500; opacity:0; transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.16,1,0.3,1); z-index:100001; pointer-events:none; white-space:nowrap; max-width:80vw; border:1px solid rgba(255,255,255,0.1); box-shadow:0 8px 32px rgba(0,0,0,0.12); }
         .bseas-toast.show { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
-        .bseas-toast.success { background:rgba(16,185,129,0.95); }
-        .bseas-toast.error { background:rgba(239,68,68,0.95); }
-        .bseas-toast.warning { background:rgba(255,193,7,0.95); }
+        .bseas-toast.success { background:rgba(16,185,129,0.68); }
+        .bseas-toast.error { background:rgba(239,68,68,0.68); }
+        .bseas-toast.warning { background:rgba(255,193,7,0.68); }
         .bseas-toast.with-action { pointer-events:auto; white-space:normal; display:flex; align-items:center; gap:14px; }
         .bseas-toast-msg { white-space:nowrap; }
         .bseas-toast-action { color:#ffffff; cursor:pointer; text-decoration:underline; font-weight:600; white-space:nowrap; }
@@ -655,7 +745,18 @@
     let panelVisible = false;
     let currentTab = 'preview';
     let isLoading = false;
-    let showTimestamps = GM_getValue('bseas_show_timestamps', true);
+    let textShowTimestamps = GM_getValue('bseas_text_show_timestamps', true);
+    let downloadShowTimestamps = GM_getValue('bseas_download_show_timestamps', true);
+    (function migrateOldTimestampKey() {
+        const oldVal = GM_getValue('bseas_show_timestamps', undefined);
+        if (oldVal !== undefined) {
+            GM_setValue('bseas_text_show_timestamps', oldVal);
+            GM_setValue('bseas_download_show_timestamps', oldVal);
+            GM_deleteValue('bseas_show_timestamps');
+            textShowTimestamps = oldVal;
+            downloadShowTimestamps = oldVal;
+        }
+    })();
     let showPreviewCharsWithTs = false;
     let showRawAIText = false;
     let sourceCollapsed = true;
@@ -686,6 +787,8 @@
     let expandedSearch = false;
     let currentPreviewLimit = 0;
     let _documentClickHandler = null;
+    let _resizeDocHandlers = null;
+    let _dragDocHandlers = [];
 
     // ===================== 7. 日志工具 =====================
     function log(...args) { console.log('[BSEAS]', ...args); }
@@ -740,6 +843,53 @@
     function formatTime(s) { const m = Math.floor(s / 60), sec = Math.floor(s % 60); return `${m}:${sec.toString().padStart(2,'0')}`; }
     function formatTimeWithMs(s) { const m = Math.floor(s / 60), sec = Math.floor(s % 60), ms = Math.floor((s % 1) * 100); return `${m}:${sec.toString().padStart(2,'0')}.${ms.toString().padStart(2,'0')}`; }
     function formatTimeForSRT(s) { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = Math.floor(s % 60), ms = Math.floor((s % 1) * 1000); return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')},${String(ms).padStart(3,'0')}`; }
+    function parseTimeInput(str) {
+        if (str == null) return null;
+        str = String(str).trim();
+        if (str === '') return null;
+        if (/^\d+(\.\d+)?$/.test(str)) return Math.max(0, parseFloat(str));
+        let m = str.match(/^(\d+):(\d{1,2})(?:\.(\d{1,3}))?$/);
+        if (m) {
+            const min = parseInt(m[1], 10), sec = parseInt(m[2], 10);
+            const ms = m[3] ? parseInt(m[3].padEnd(3, '0'), 10) : 0;
+            return Math.max(0, min * 60 + sec + ms / 1000);
+        }
+        m = str.match(/^(\d+):(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/);
+        if (m) {
+            const h = parseInt(m[1], 10), min = parseInt(m[2], 10), sec = parseInt(m[3], 10);
+            const ms = m[4] ? parseInt(m[4].padEnd(3, '0'), 10) : 0;
+            return Math.max(0, h * 3600 + min * 60 + sec + ms / 1000);
+        }
+        return null;
+    }
+    function parseSRT(text) {
+        if (!text || typeof text !== 'string') return [];
+        const blocks = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim().split(/\n\s*\n/);
+        const result = [];
+        for (const block of blocks) {
+            const lines = block.split('\n').filter(l => l.trim() !== '');
+            if (lines.length < 2) continue;
+            const timeLine = lines.find(l => l.includes('-->'));
+            if (!timeLine) continue;
+            const m = timeLine.match(/(\d{1,2}:\d{2}(?::\d{2})?[,.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[,.]\d{1,3})/);
+            if (!m) continue;
+            const parseSRTTime = (t) => {
+                const p = t.replace(',', '.').split(':');
+                if (p.length === 3) return Number(p[0]) * 3600 + Number(p[1]) * 60 + Number(p[2]);
+                return Number(p[0]) * 60 + Number(p[1]);
+            };
+            const from = parseSRTTime(m[1]);
+            const to = parseSRTTime(m[2]);
+            const contentStartIdx = lines.indexOf(timeLine) + 1;
+            const content = lines.slice(contentStartIdx).join('\n').trim();
+            if (content) result.push({ from, to, content });
+        }
+        return result;
+    }
+    function buildSRTFromBody(body) {
+        if (!Array.isArray(body)) return '';
+        return body.map((it, index) => `${index + 1}\n${formatTimeForSRT(it.from)} --> ${formatTimeForSRT(it.to)}\n${it.content || ''}\n`).join('\n');
+    }
     function parseAdTime(str) { str = str.trim(); const m = str.match(/^(\d+):(\d{2})$/); return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null; }
     function formatCommentsForAI() { return hotComments.length ? hotComments.map(c => `“${c.content.length > 200 ? c.content.slice(0,200) + '...' : c.content}” 赞数:${c.like}`).join('\n') : ''; }
     function showToast(msg, type = '', action) {
@@ -1096,10 +1246,17 @@
             const pr = await fetch(`https://api.bilibili.com/x/player/wbi/v2?aid=${aid}&cid=${cid}`, { credentials: 'include' });
             const pd = await pr.json();
             if (pd.code !== 0 || !pd.data?.subtitle?.subtitles) return [];
-            return pd.data.subtitle.subtitles.map((s, i) => ({
+            const subs = pd.data.subtitle.subtitles.map((s, i) => ({
                 id: s.id || i, lan: s.lan, lan_doc: s.lan_doc, subtitle_url: s.subtitle_url,
                 isAI: s.lan.startsWith('ai-'), body: null
             }));
+            const isZh = s => /^zh/i.test(s.lan) || /[\u4e00-\u9fa5]/.test(s.lan_doc || '');
+            subs.sort((a, b) => {
+                const az = isZh(a), bz = isZh(b);
+                if (az !== bz) return az ? -1 : 1;
+                return 0;
+            });
+            return subs;
         } catch (e) { return []; }
     }
     async function fetchSubtitleContent(url) {
@@ -1328,6 +1485,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         return items.length > 0 ? items : null;
     }
     function correctedSubtitleKey(videoKey) { return 'bseas_corrected_subtitle_' + videoKey; }
+    function userSubsKey(videoKey) { return 'bseas_user_subs_' + videoKey; }
     function getCorrectedSubtitle(videoKey) {
         if (!videoKey) return null;
         const v = GM_getValue(correctedSubtitleKey(videoKey), null);
@@ -1343,6 +1501,31 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     function clearCorrectedSubtitle(videoKey) {
         if (!videoKey) return;
         GM_deleteValue(correctedSubtitleKey(videoKey));
+    }
+    function getUserSubtitlesList(videoKey) {
+        if (!videoKey) return [];
+        const v = GM_getValue(userSubsKey(videoKey), null);
+        if (!Array.isArray(v)) return [];
+        return v;
+    }
+    function saveUserSubtitleItem(videoKey, body, lanDoc, existingId) {
+        if (!videoKey || !Array.isArray(body)) return null;
+        const list = getUserSubtitlesList(videoKey);
+        if (existingId) {
+            const idx = list.findIndex(s => s.id === existingId);
+            if (idx >= 0) { list[idx].body = body; list[idx].lanDoc = lanDoc || list[idx].lanDoc; GM_setValue(userSubsKey(videoKey), list); return existingId; }
+        }
+        let n = 1;
+        while (list.some(s => s.id === 'user-' + n)) n++;
+        const id = 'user-' + n;
+        list.push({ id, lanDoc: lanDoc || ('中文' + n), body, method: 'manual' });
+        GM_setValue(userSubsKey(videoKey), list);
+        return id;
+    }
+    function deleteUserSubtitleItem(videoKey, id) {
+        if (!videoKey || !id) return;
+        const list = getUserSubtitlesList(videoKey).filter(s => s.id !== id);
+        GM_setValue(userSubsKey(videoKey), list);
     }
     function createThrottledRenderer(el, options) {
         options = options || {};
@@ -1466,12 +1649,19 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     function appendCorrectedSubtitleOption(lanDoc, method) {
         if (!currentVideoKey) return;
         const stored = getCorrectedSubtitle(currentVideoKey);
-        if (!stored || !stored.body || stored.body.length === 0) return;
-        const doc = lanDoc || stored.lanDoc || '已修正';
-        const m = method || stored.method || 'ai';
-        const idx = allSubtitles.findIndex(s => s.id === 'ai-corrected');
-        if (idx >= 0) { allSubtitles[idx].body = stored.body; allSubtitles[idx].lan_doc = doc; allSubtitles[idx].editMethod = m; return; }
-        allSubtitles.unshift({ id: 'ai-corrected', lan_doc: doc, isAI: true, body: stored.body, editMethod: m });
+        if (stored && stored.body && stored.body.length > 0) {
+            const doc = lanDoc || stored.lanDoc || '已修正';
+            const m = method || stored.method || 'ai';
+            const idx = allSubtitles.findIndex(s => s.id === 'ai-corrected');
+            if (idx >= 0) { allSubtitles[idx].body = stored.body; allSubtitles[idx].lan_doc = doc; allSubtitles[idx].editMethod = m; }
+            else allSubtitles.unshift({ id: 'ai-corrected', lan_doc: doc, isAI: true, body: stored.body, editMethod: m });
+        }
+        const userSubs = getUserSubtitlesList(currentVideoKey);
+        for (const us of userSubs) {
+            const idx = allSubtitles.findIndex(s => s.id === us.id);
+            if (idx >= 0) { allSubtitles[idx].body = us.body; allSubtitles[idx].lan_doc = us.lanDoc; allSubtitles[idx].isUserEdited = true; allSubtitles[idx].editMethod = 'manual'; }
+            else allSubtitles.unshift({ id: us.id, lan_doc: us.lanDoc, isUserEdited: true, body: us.body, editMethod: 'manual' });
+        }
     }
     let loadSubtitleGeneration = 0;
     async function loadSubtitle(sub) {
@@ -1591,17 +1781,111 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             if (btn2) { btn2.classList.remove('loading'); const sp = btn2.querySelector('span'); if (sp) sp.textContent = 'AI 修正字幕'; }
         }
     }
-    function openSubtitleEditor() {
-        if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
-        const existing = document.querySelector('.bseas-edit-overlay');
-        if (existing) existing.remove();
-        const body = currentSubtitleData.body;
-        const lanDoc = currentSubtitleData.lan_doc || '字幕';
+    function openSRTPasteDialog() {
+        if (!currentVideoKey) { showToast('请先加载视频', 'warning'); return; }
+        const existing = document.querySelector('.bseas-edit-overlay.bseas-srtpaste-overlay');
+        if (existing) return;
+        const video = document.querySelector('#bilibili-player video') || document.querySelector('video');
+        const videoDur = video ? video.duration : 0;
         const overlay = document.createElement('div');
-        overlay.className = 'bseas-edit-overlay';
-        const entriesHtml = body.map((it, i) => `<div class="bseas-edit-entry"><span class="bseas-edit-ts">${formatTime(it.from)} -> ${formatTime(it.to)}</span><textarea class="bseas-edit-textarea" data-idx="${i}" rows="1">${escapeHtml(it.content || '')}</textarea></div>`).join('');
-        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal"><div class="bseas-edit-modal-header"><span>编辑字幕 - ${escapeHtml(lanDoc)}（共${body.length}条）</span></div><div class="bseas-edit-modal-body">${entriesHtml}</div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save">保存</button></div></div>`);
+        overlay.className = 'bseas-edit-overlay bseas-srtpaste-overlay';
+        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal" style="max-width:560px;"><div class="bseas-edit-modal-header"><span>新建字幕 - 粘贴SRT</span></div><div class="bseas-edit-modal-body" style="padding:16px 20px;"><div style="font-size:13px;color:var(--bseas-text-muted);margin-bottom:10px;">请粘贴SRT格式字幕内容${videoDur ? `（视频时长 ${formatTime(videoDur)}）` : ''}：</div><textarea id="bseas-srtpaste-input" class="bseas-text-area" style="width:100%;min-height:260px;font-family:monospace;font-size:13px;resize:vertical;" placeholder="1\n00:00:01,000 --> 00:00:03,000\n字幕内容\n..."></textarea><div id="bseas-srtpaste-hint" style="font-size:12px;color:var(--bseas-text-muted);margin-top:8px;"></div></div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-srtpaste-confirm">解析并编辑</button></div></div>`);
         document.body.appendChild(overlay);
+        const inputEl = overlay.querySelector('#bseas-srtpaste-input');
+        const hintEl = overlay.querySelector('#bseas-srtpaste-hint');
+        const closeDialog = () => { overlay.querySelector('.bseas-edit-modal')?.classList.add('closing'); overlay.classList.add('closing'); setTimeout(() => { overlay.remove(); document.removeEventListener('keydown', escHandler); }, 200); };
+        overlay.querySelector('.cancel').addEventListener('click', closeDialog);
+        overlay.addEventListener('click', e => { if (e.target === overlay) closeDialog(); });
+        const escHandler = e => { if (e.key === 'Escape') closeDialog(); };
+        document.addEventListener('keydown', escHandler);
+        overlay.querySelector('#bseas-srtpaste-confirm').addEventListener('click', () => {
+            const text = inputEl.value.trim();
+            if (!text) { showToast('请粘贴SRT内容', 'warning'); return; }
+            const parsed = parseSRT(text);
+            if (parsed.length === 0) { showToast('未解析到有效字幕，请检查格式', 'warning'); return; }
+            let overCount = 0;
+            if (videoDur && videoDur > 0) {
+                for (const it of parsed) { if (it.to > videoDur + 1) overCount++; }
+            }
+            document.removeEventListener('keydown', escHandler);
+            closeDialog();
+            openSubtitleEditor({ isNew: true, presetBody: parsed });
+            if (overCount > 0) setTimeout(() => showToast(`解析 ${parsed.length} 条，其中 ${overCount} 条时间超出视频时长`, 'warning'), 300);
+            else setTimeout(() => showToast(`解析成功 ${parsed.length} 条字幕`, 'success'), 300);
+        });
+        setTimeout(() => inputEl?.focus(), 100);
+    }
+    function openSubtitleEditor(opts) {
+        opts = opts || {};
+        const isNew = !!opts.isNew;
+        if (!isNew && !currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
+        if (!currentVideoKey) { showToast('请先加载视频', 'warning'); return; }
+        const existing = document.querySelector('.bseas-edit-overlay.bseas-editor-overlay');
+        if (existing) existing.remove();
+        const lanDoc = isNew ? '手动新建' : (currentSubtitleData.lan_doc || '字幕');
+        const baseBody = opts.presetBody ? opts.presetBody : ((!isNew && currentSubtitleData?.body?.length) ? currentSubtitleData.body : []);
+        const DEL_SVG = '<svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
+        const PLUS_SVG = '<svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>';
+        const DOWNLOAD_SVG = '<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>';
+        const FIND_SVG = '<svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>';
+        let working = baseBody.map(it => ({ from: Number(it.from) || 0, to: Number(it.to) || 0, content: it.content || '' }));
+        if (working.length === 0) working.push({ from: 0, to: 5, content: '' });
+        const overlay = document.createElement('div');
+        overlay.className = 'bseas-edit-overlay bseas-editor-overlay';
+        const editTitlePrefix = isNew ? '新建字幕' : (currentSubtitleData?.isAI ? '编辑AI字幕' : (currentSubtitleData?.isUserEdited ? '编辑字幕' : '编辑字幕'));
+        const titleText = `${editTitlePrefix} - ${escapeHtml(lanDoc)}`;
+        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal"><div class="bseas-edit-modal-header"><span id="bseas-edit-title">${titleText}（共${working.length}条）</span><button class="bseas-edit-tool-btn" id="bseas-edit-toggle-find" title="查找替换" style="padding:4px 8px;">${FIND_SVG}</button></div><div class="bseas-edit-findbar" id="bseas-edit-findbar"><div class="bseas-edit-find-row"><input type="text" class="bseas-edit-find-input" id="bseas-edit-find" placeholder="查找内容"><button class="bseas-edit-find-btn secondary" id="bseas-edit-find-next">下一个</button><span class="bseas-edit-find-count" id="bseas-edit-find-count"></span></div><div class="bseas-edit-find-row"><input type="text" class="bseas-edit-find-input" id="bseas-edit-replace" placeholder="替换为"><button class="bseas-edit-find-btn" id="bseas-edit-replace-one">替换</button><button class="bseas-edit-find-btn" id="bseas-edit-replace-all">全部替换</button></div></div><div class="bseas-edit-modal-body" id="bseas-edit-body"></div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn" id="bseas-edit-export-srt" style="background:rgba(0,174,236,0.1);color:var(--bseas-primary);">${DOWNLOAD_SVG}<span style="margin-left:4px;">导出SRT</span></button><button class="bseas-edit-modal-btn save">保存</button></div></div>`);
+        document.body.appendChild(overlay);
+        const bodyEl = overlay.querySelector('#bseas-edit-body');
+        const titleEl = overlay.querySelector('#bseas-edit-title');
+        let findCursor = { entry: 0, offset: 0 };
+        function flushInputs() {
+            const entries = bodyEl.querySelectorAll('.bseas-edit-entry');
+            entries.forEach((entry, i) => {
+                if (!working[i]) return;
+                const fromEl = entry.querySelector('.bseas-edit-time[data-field="from"]');
+                const toEl = entry.querySelector('.bseas-edit-time[data-field="to"]');
+                const ta = entry.querySelector('.bseas-edit-textarea');
+                if (fromEl) { const v = parseTimeInput(fromEl.value); if (v != null) working[i].from = v; }
+                if (toEl) { const v = parseTimeInput(toEl.value); if (v != null) working[i].to = v; }
+                if (ta) working[i].content = ta.value;
+            });
+        }
+        function renderEntries() {
+            const html = working.map((it, i) => `<div class="bseas-edit-entry" data-idx="${i}"><div class="bseas-edit-times"><input class="bseas-edit-time" data-field="from" value="${escapeHtml(formatTimeWithMs(it.from))}" title="开始时间 (M:SS.ms)"><span class="bseas-edit-arrow"><svg viewBox="0 0 24 24"><path d="M14 5l-1.41 1.41L16.17 10H4v2h12.17l-3.58 3.59L14 17l6-6z"/></svg></span><input class="bseas-edit-time" data-field="to" value="${escapeHtml(formatTimeWithMs(it.to))}" title="结束时间 (M:SS.ms)"></div><textarea class="bseas-edit-textarea" rows="1">${escapeHtml(it.content || '')}</textarea><div class="bseas-edit-actions"><button class="bseas-edit-add" data-add-idx="${i}" title="在此条之前新建">${PLUS_SVG}</button><button class="bseas-edit-del" data-del-idx="${i}" title="删除该条">${DEL_SVG}</button></div></div>`).join('');
+            safeSetInnerHTML(bodyEl, html);
+            if (titleEl) titleEl.textContent = `${editTitlePrefix} - ${lanDoc}（共${working.length}条）`;
+        }
+        renderEntries();
+        bodyEl.addEventListener('click', (e) => {
+            const delBtn = e.target.closest('.bseas-edit-del');
+            if (delBtn) {
+                e.stopPropagation();
+                flushInputs();
+                const idx = parseInt(delBtn.dataset.delIdx, 10);
+                if (isNaN(idx) || idx < 0 || idx >= working.length) return;
+                working.splice(idx, 1);
+                if (working.length === 0) working.push({ from: 0, to: 5, content: '' });
+                renderEntries();
+                return;
+            }
+            const addBtn = e.target.closest('.bseas-edit-add');
+            if (addBtn) {
+                e.stopPropagation();
+                flushInputs();
+                const insertIdx = parseInt(addBtn.dataset.addIdx, 10);
+                if (isNaN(insertIdx) || insertIdx < 0 || insertIdx > working.length) return;
+                const prevTo = insertIdx > 0 ? working[insertIdx - 1].to : 0;
+                working.splice(insertIdx, 0, { from: prevTo, to: prevTo + 5, content: '' });
+                renderEntries();
+                const newEntry = bodyEl.querySelectorAll('.bseas-edit-entry')[insertIdx];
+                if (newEntry) {
+                    newEntry.scrollIntoView({ block: 'center' });
+                    const ta = newEntry.querySelector('.bseas-edit-textarea');
+                    if (ta) ta.focus();
+                }
+            }
+        });
         const closeOverlay = () => {
             const modal = overlay.querySelector('.bseas-edit-modal');
             if (modal) {
@@ -1616,14 +1900,124 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const escHandler = (e) => { if (e.key === 'Escape') closeOverlay(); };
         document.addEventListener('keydown', escHandler);
         overlay.querySelector('.cancel').addEventListener('click', (e) => { e.stopPropagation(); closeOverlay(); });
+        overlay.querySelector('#bseas-edit-export-srt').addEventListener('click', (e) => {
+            e.stopPropagation();
+            flushInputs();
+            const text = buildSRTFromBody(working);
+            if (!text) { showToast('无字幕可导出', 'warning'); return; }
+            const title = sanitizeFilename(getVideoTitle()) || 'subtitle';
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+            a.download = `${title}.srt`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+            showToast('SRT 导出成功', 'success');
+        });
+        const findbar = overlay.querySelector('#bseas-edit-findbar');
+        overlay.querySelector('#bseas-edit-toggle-find').addEventListener('click', (e) => {
+            e.stopPropagation();
+            findbar.classList.toggle('open');
+            if (findbar.classList.contains('open')) overlay.querySelector('#bseas-edit-find')?.focus();
+        });
+        function countMatches(findStr) {
+            if (!findStr) return 0;
+            let n = 0;
+            for (const it of working) { let idx = 0; while ((idx = it.content.indexOf(findStr, idx)) !== -1) { n++; idx += findStr.length; } }
+            return n;
+        }
+        function updateFindCount() {
+            const f = overlay.querySelector('#bseas-edit-find').value;
+            const cntEl = overlay.querySelector('#bseas-edit-find-count');
+            if (cntEl) cntEl.textContent = f ? `${countMatches(f)} 处` : '';
+        }
+        overlay.querySelector('#bseas-edit-find').addEventListener('input', () => { findCursor = { entry: 0, offset: 0 }; updateFindCount(); });
+        function findNextOccurrence(findStr, fromEntry, fromOffset) {
+            for (let i = fromEntry; i < working.length; i++) {
+                const content = working[i].content;
+                const start = i === fromEntry ? fromOffset : 0;
+                const idx = content.indexOf(findStr, start);
+                if (idx !== -1) return { entry: i, offset: idx };
+            }
+            for (let i = 0; i <= fromEntry && i < working.length; i++) {
+                const content = working[i].content;
+                const idx = content.indexOf(findStr, 0);
+                if (idx !== -1) return { entry: i, offset: idx };
+            }
+            return null;
+        }
+        overlay.querySelector('#bseas-edit-find-next').addEventListener('click', (e) => {
+            e.stopPropagation();
+            flushInputs();
+            const f = overlay.querySelector('#bseas-edit-find').value;
+            if (!f) return;
+            const total = countMatches(f);
+            if (total === 0) { showToast('未找到匹配项', ''); return; }
+            const found = findNextOccurrence(f, findCursor.entry, findCursor.offset);
+            if (found) {
+                findCursor = { entry: found.entry, offset: found.offset + f.length };
+                const entryEl = bodyEl.querySelectorAll('.bseas-edit-entry')[found.entry];
+                if (entryEl) {
+                    entryEl.scrollIntoView({ block: 'center' });
+                    const ta = entryEl.querySelector('.bseas-edit-textarea');
+                    if (ta) { ta.focus(); ta.setSelectionRange(found.offset, found.offset + f.length); }
+                }
+            }
+            updateFindCount();
+        });
+        overlay.querySelector('#bseas-edit-replace-one').addEventListener('click', (e) => {
+            e.stopPropagation();
+            flushInputs();
+            const f = overlay.querySelector('#bseas-edit-find').value;
+            const r = overlay.querySelector('#bseas-edit-replace').value;
+            if (!f) return;
+            const found = findNextOccurrence(f, findCursor.entry, findCursor.offset);
+            if (!found) { showToast('未找到匹配项', ''); return; }
+            working[found.entry].content = working[found.entry].content.slice(0, found.offset) + r + working[found.entry].content.slice(found.offset + f.length);
+            findCursor = { entry: found.entry, offset: found.offset + r.length };
+            renderEntries();
+            updateFindCount();
+            showToast('已替换 1 处', 'success');
+        });
+        overlay.querySelector('#bseas-edit-replace-all').addEventListener('click', (e) => {
+            e.stopPropagation();
+            flushInputs();
+            const f = overlay.querySelector('#bseas-edit-find').value;
+            const r = overlay.querySelector('#bseas-edit-replace').value;
+            if (!f) return;
+            let n = 0;
+            for (const it of working) {
+                if (it.content.includes(f)) { n += it.content.split(f).length - 1; it.content = it.content.split(f).join(r); }
+            }
+            findCursor = { entry: 0, offset: 0 };
+            renderEntries();
+            updateFindCount();
+            showToast(n ? `已替换 ${n} 处` : '未找到匹配项', n ? 'success' : '');
+        });
         overlay.querySelector('.save').addEventListener('click', (e) => {
             e.stopPropagation();
-            const textareas = overlay.querySelectorAll('.bseas-edit-textarea');
-            const editedBody = body.map((it, i) => ({ from: it.from, to: it.to, content: textareas[i] ? textareas[i].value : it.content }));
-            setCorrectedSubtitle(currentVideoKey, editedBody, lanDoc, 'manual');
-            appendCorrectedSubtitleOption(lanDoc, 'manual');
-            const corrected = allSubtitles.find(s => s.id === 'ai-corrected');
-            if (corrected) loadSubtitle(corrected);
+            flushInputs();
+            const editedBody = working.map(it => {
+                const from = Number(it.from) || 0;
+                let to = Number(it.to) || 0;
+                if (to < from) to = from;
+                return { from, to, content: it.content || '' };
+            });
+            if (editedBody.length === 0) { showToast('至少保留一条字幕', 'warning'); return; }
+            const isEditingAI = !isNew && currentSubtitleData?.isAI;
+            const isEditingUser = !isNew && currentSubtitleData?.isUserEdited;
+            let savedId;
+            if (isEditingUser) {
+                savedId = saveUserSubtitleItem(currentVideoKey, editedBody, lanDoc, currentSubtitleData.id);
+            } else {
+                const existing = getUserSubtitlesList(currentVideoKey);
+                let n = 1;
+                while (existing.some(s => s.id === 'user-' + n)) n++;
+                const autoName = isNew ? ('手动字幕' + n) : ('中文' + n);
+                savedId = saveUserSubtitleItem(currentVideoKey, editedBody, autoName, null);
+            }
+            appendCorrectedSubtitleOption();
+            const saved = allSubtitles.find(s => s.id === savedId);
+            if (saved) loadSubtitle(saved);
             showToast('字幕编辑已保存', 'success');
             closeOverlay();
         });
@@ -1635,6 +2029,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const direction = newIdx >= _lastTabIndex ? 'right' : 'left';
         _lastTabIndex = newIdx < 0 ? 0 : newIdx;
         currentTab = tab;
+        if (followModeActive && tab !== 'preview') stopFollowMode();
+        updateFollowBtnVisibility();
         const tabsEl = document.querySelector('.bseas-tabs');
         if (tabsEl) tabsEl.classList.toggle('hidden', tab === 'settings');
         document.querySelectorAll('.bseas-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
@@ -1667,7 +2063,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             <div class="bseas-panel">
                 <div class="bseas-content"><div class="bseas-sticky-top"><div class="bseas-header">
                     <div class="bseas-header-text">
-                        <div class="bseas-title">B站字幕获取、AI分析及广告跳过 <span class="bseas-platform-tag">BiliBili</span></div>
+                        <div class="bseas-title">B站字幕获取、AI分析及广告跳过</div>
                         <div class="bseas-subtitle-info">点击刷新</div>
                         <div class="bseas-ad-hint" id="bseas-ad-hint">广告跳过功能仅在进行AI分析后可用</div>
                     </div>
@@ -1677,12 +2073,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     </div>
                 </div>
                 <div class="bseas-api-warning-container">${showApiWarning ? `<div class="bseas-api-warning"><span class="bseas-api-warning-icon">⚠</span><span class="bseas-api-warning-text">未设置API Key，AI分析功能将无法使用</span><button class="bseas-api-warning-btn" id="bseas-go-settings">去设置</button></div>` : ''}</div>
-                <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">选择或修正字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-collapse" id="bseas-source-collapse"><div class="bseas-collapse-inner"><div class="bseas-source-body" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div></div></div>
+                <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-collapse" id="bseas-source-collapse"><div class="bseas-collapse-inner"><div class="bseas-source-body" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div></div></div>
                 <div class="bseas-tabs"><button class="bseas-tab active" data-tab="preview">浏览</button><button class="bseas-tab" data-tab="ai">AI 分析</button><button class="bseas-tab" data-tab="text">文本</button></div></div><div class="bseas-tab-body"><div class="bseas-empty">正在初始化...</div></div></div>
+                <button class="bseas-follow-btn" id="bseas-follow-btn" title="字幕跟随视频滚动"><svg viewBox="0 0 1024 1024"><path d="M882.734114 459.147258l0.024559-0.024559L244.016061 21.12718l-0.199545 0.188288C230.582097 8.748245 212.62819 1.014096 192.840518 1.014096c-40.704051 0-73.699536 32.66905-73.699536 72.996524 0 22.148439-0.954745 65.513086 0 64.572668l0 373.422851 0 393.071354c0 0.325411 0 25.249057 0 44.935422 0 40.302915 32.995485 72.972988 73.699536 72.972988 19.862373 0 37.892005-7.78429 51.125401-20.466124l0.050142 0.025583 638.742613-437.982216-0.024559-0.038886c13.886265-13.270235 22.549575-31.889291 22.549575-52.531424 0-0.050142 0-0.088004 0-0.150426 0-0.050142 0-0.11154 0-0.149403C905.28369 491.048829 896.620379 472.41647 882.734114 459.147258z"/></svg></button>
                 <div class="bseas-footer">
                     <div id="bseas-footer-normal" style="display:flex;gap:12px;width:100%;">
-                        <button class="bseas-btn bseas-btn-secondary" id="bseas-download-txt-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>TXT</button>
-                        <button class="bseas-btn bseas-btn-secondary" id="bseas-download-srt-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>SRT</button>
+                        <button class="bseas-btn bseas-btn-secondary" id="bseas-play-btn" disabled><svg viewBox="0 0 1024 1024" width="20" height="20"><path fill="currentColor" d="M882.734114 459.147258l0.024559-0.024559L244.016061 21.12718l-0.199545 0.188288C230.582097 8.748245 212.62819 1.014096 192.840518 1.014096c-40.704051 0-73.699536 32.66905-73.699536 72.996524 0 22.148439-0.954745 65.513086 0 64.572668l0 373.422851 0 393.071354c0 0.325411 0 25.249057 0 44.935422 0 40.302915 32.995485 72.972988 73.699536 72.972988 19.862373 0 37.892005-7.78429 51.125401-20.466124l0.050142 0.025583 638.742613-437.982216-0.024559-0.038886c13.886265-13.270235 22.549575-31.889291 22.549575-52.531424 0-0.050142 0-0.088004 0-0.150426 0-0.050142 0-0.11154 0-0.149403C905.28369 491.048829 896.620379 472.41647 882.734114 459.147258z"/></svg>播放</button>
+                        <button class="bseas-btn bseas-btn-secondary" id="bseas-download-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>下载</button>
                         <button class="bseas-btn bseas-btn-primary" id="bseas-copy-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制全部</button>
                     </div>
                     <div id="bseas-footer-settings" style="display:none;gap:12px;width:100%;">
@@ -1690,12 +2087,16 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                         <button class="bseas-btn bseas-btn-primary" id="bseas-s-save">保存设置</button>
                     </div>
                 </div>
+                <div class="bseas-resize-edge left"></div><div class="bseas-resize-edge right"></div><div class="bseas-resize-edge bottom"></div>
             </div>
         `);
         document.body.appendChild(c);
         applySavedPanelPosition(c);
         makeDraggable(c);
+        makeResizable(c);
         bindEvents(c);
+        updateTriggerBtnColor();
+        setInterval(updateTriggerBtnColor, 3000);
         if (hasUpdate) showUpdateBadgeInPanel();
         window.addEventListener('resize', () => {
             const container = document.querySelector('.bseas-container');
@@ -1761,11 +2162,140 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 panel.style.top = 'auto';
             }
         }
+        const savedSize = GM_getValue('bseas_panel_size', null);
+        if (savedSize && savedSize.w && savedSize.h) {
+            const maxW = Math.min(document.documentElement.clientWidth - 40, 1100);
+            const maxH = Math.min(document.documentElement.clientHeight - 40, 1100);
+            panel.style.width = Math.max(340, Math.min(maxW, savedSize.w)) + 'px';
+            panel.style.height = Math.max(320, Math.min(maxH, savedSize.h)) + 'px';
+        } else {
+            panel.style.width = '';
+            panel.style.height = '';
+        }
+    }
+    function makeResizable(container) {
+        const panel = container.querySelector('.bseas-panel');
+        if (!panel) return;
+        const edges = panel.querySelectorAll('.bseas-resize-edge');
+        if (!edges.length) return;
+        if (_resizeDocHandlers) {
+            document.removeEventListener('mousemove', _resizeDocHandlers.move);
+            document.removeEventListener('mouseup', _resizeDocHandlers.up);
+            window.removeEventListener('blur', _resizeDocHandlers.up);
+        }
+        let resizing = false, dir = '', startW = 0, startH = 0, startX = 0, startY = 0, startRectR = 0;
+        const getTriggerSide = () => {
+            const manualPos = GM_getValue('bseas_panel_position', null);
+            const preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
+            if (manualPos) return manualPos.side;
+            return preset.includes('left') ? 'left' : 'right';
+        };
+        const onDown = (e, edge) => {
+            if (e.button !== 0) return;
+            e.preventDefault(); e.stopPropagation();
+            resizing = true;
+            dir = edge.classList.contains('left') ? 'left' : (edge.classList.contains('right') ? 'right' : 'bottom');
+            const rect = panel.getBoundingClientRect();
+            startW = rect.width; startH = rect.height;
+            startX = e.clientX; startY = e.clientY;
+            startRectR = rect.right;
+            panel.classList.add('no-transition');
+            document.body.style.userSelect = 'none';
+        };
+        const onMove = (e) => {
+            if (!resizing) return;
+            const dx = e.clientX - startX, dy = e.clientY - startY;
+            const maxW = Math.min(document.documentElement.clientWidth - 40, 1100);
+            const maxH = Math.min(document.documentElement.clientHeight - 40, 1100);
+            const triggerSide = getTriggerSide();
+            if (dir === 'right') {
+                const w = Math.max(340, Math.min(maxW, startW + dx));
+                panel.style.width = w + 'px';
+            } else if (dir === 'bottom') {
+                const h = Math.max(320, Math.min(maxH, startH + dy));
+                panel.style.height = h + 'px';
+            } else if (dir === 'left') {
+                const w = Math.max(340, Math.min(maxW, startW - dx));
+                panel.style.width = w + 'px';
+            }
+            if (dir === 'left' || dir === 'right') {
+                const curRect = panel.getBoundingClientRect();
+                if (triggerSide === 'right') {
+                    const shift = curRect.right - startRectR;
+                    if (shift !== 0) {
+                        let curLeft = parseFloat(panel.style.left) || 0;
+                        if (panel.style.left === '' || panel.style.left === 'auto') curLeft = 0;
+                        panel.style.left = (curLeft - shift) + 'px';
+                        panel.style.right = 'auto';
+                    }
+                }
+            }
+            const _ft = panel.querySelector('.bseas-footer');
+            if (_ft) panel.style.setProperty('--bseas-footer-h', (_ft.offsetHeight + 14) + 'px');
+        };
+        const onUp = () => {
+            if (!resizing) return;
+            resizing = false;
+            document.body.style.userSelect = '';
+            panel.classList.remove('no-transition');
+            GM_setValue('bseas_panel_size', { w: panel.offsetWidth, h: panel.offsetHeight });
+        };
+        edges.forEach(edge => edge.addEventListener('mousedown', e => onDown(e, edge)));
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        window.addEventListener('blur', onUp);
+        _resizeDocHandlers = { move: onMove, up: onUp };
+    }
+    function updateTriggerBtnColor() {
+        const btn = document.querySelector('.bseas-trigger-btn');
+        if (!btn) return;
+        const r = btn.getBoundingClientRect();
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) { btn.classList.remove('on-dark'); return; }
+        const container = btn.closest('.bseas-container');
+        let el = null;
+        try {
+            if (container) container.style.pointerEvents = 'none';
+            el = document.elementFromPoint(cx, cy);
+        } finally {
+            if (container) container.style.pointerEvents = '';
+        }
+        if (!el) { btn.classList.remove('on-dark'); return; }
+        let bg = null;
+        let cur = el;
+        while (cur && cur !== document.documentElement) {
+            const s = getComputedStyle(cur);
+            const c = s.backgroundColor;
+            if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') {
+                const tm = c.match(/rgba?\(([^)]+)\)/);
+                if (tm) {
+                    const tp = tm[1].split(',').map(p => parseFloat(p.trim()));
+                    const alpha = tp.length === 4 ? tp[3] : 1;
+                    if (alpha > 0.3) { bg = c; break; }
+                }
+            }
+            cur = cur.parentElement;
+        }
+        if (!bg) { btn.classList.remove('on-dark'); return; }
+        const m = bg.match(/rgba?\(([^)]+)\)/);
+        if (!m) { btn.classList.remove('on-dark'); return; }
+        const parts = m[1].split(',').map(p => parseFloat(p.trim()));
+        const [R, G, B] = parts;
+        const lum = (0.299 * R + 0.587 * G + 0.114 * B) / 255;
+        if (lum < 0.5) btn.classList.add('on-dark');
+        else btn.classList.remove('on-dark');
     }
     function makeDraggable(container) {
         const handle = container.querySelector('.bseas-header-text');
         const triggerBtn = container.querySelector('.bseas-trigger-btn');
         const panel = container.querySelector('.bseas-panel');
+        _dragDocHandlers.forEach(h => {
+            document.removeEventListener('mousemove', h.move);
+            document.removeEventListener('mouseup', h.up);
+            window.removeEventListener('blur', h.up);
+        });
+        _dragDocHandlers = [];
         function setupDrag(element, isTrigger) {
             let isDragging = false, isMouseDown = false, startX = 0, startY = 0, offsetX = 0, offsetY = 0, hasMoved = false;
             element.addEventListener('mousedown', (e) => {
@@ -1818,11 +2348,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     GM_setValue('bseas_panel_position', { side, dist, top: rect.top });
                     applySavedPanelPosition(container);
                     requestAnimationFrame(() => requestAnimationFrame(() => { panel.classList.remove('no-transition'); }));
-                    if (isTrigger) element._wasDragged = true;
+                    if (isTrigger) { element._wasDragged = true; updateTriggerBtnColor(); }
                 }
             };
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', onMouseUp);
+            window.addEventListener('blur', onMouseUp);
+            _dragDocHandlers.push({ move: onMouseMove, up: onMouseUp });
         }
         if (handle) setupDrag(handle, false);
         if (triggerBtn) setupDrag(triggerBtn, true);
@@ -1936,8 +2468,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         c.querySelector('#bseas-settings-btn').addEventListener('click', e => { e.stopPropagation(); switchTab(currentTab === 'settings' ? 'preview' : 'settings'); });
         c.querySelector('#bseas-go-settings')?.addEventListener('click', e => { e.stopPropagation(); switchTab('settings'); });
         c.querySelector('#bseas-copy-btn').addEventListener('click', () => { const t = getFormattedText(); if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); } });
-        c.querySelector('#bseas-download-txt-btn').addEventListener('click', () => downloadSubtitle('txt'));
-        c.querySelector('#bseas-download-srt-btn').addEventListener('click', () => downloadSubtitle('srt'));
+        c.querySelector('#bseas-play-btn').addEventListener('click', e => { e.stopPropagation(); togglePlayMode(); });
+        c.querySelector('#bseas-download-btn').addEventListener('click', e => { e.stopPropagation(); openDownloadMenu(); });
+        c.querySelector('#bseas-follow-btn').addEventListener('click', e => { e.stopPropagation(); toggleFollowMode(); });
         c.querySelector('#bseas-s-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); switchTab('preview'); });
         c.querySelector('#bseas-s-save')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1945,13 +2478,15 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             showToast('✓ 设置已保存', 'success');
             switchTab('preview');
             panelVisible = false;
+            if (playModeActive) stopPlayMode();
+            if (followModeActive) stopFollowMode();
             document.querySelector('.bseas-container')?.remove();
             createUI();
             setTimeout(() => fetchAllSubtitles(true), 200);
         });
     }
     function downloadSubtitle(format) {
-        const text = format === 'srt' ? getSRTText() : getFormattedText();
+        const text = format === 'srt' ? getSRTText() : getFormattedTextForDownload();
         if (!text) return;
         const title = sanitizeFilename(getVideoTitle());
         const a = document.createElement('a');
@@ -1961,11 +2496,272 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         setTimeout(() => URL.revokeObjectURL(a.href), 1000);
         showToast(`✓ ${format.toUpperCase()}下载成功`, 'success');
     }
+    function openDownloadMenu() {
+        if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
+        const existing = document.querySelector('.bseas-edit-overlay.bseas-dl-overlay');
+        if (existing) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'bseas-edit-overlay bseas-dl-overlay';
+        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal" style="max-width:380px;"><div class="bseas-edit-modal-header"><span>下载字幕</span></div><div class="bseas-edit-modal-body" style="padding:20px;"><div class="bseas-dl-format-group"><label class="bseas-dl-option checked"><input type="radio" name="bseas-dl-format" value="txt" checked><span class="bseas-dl-option-content"><span class="bseas-dl-option-title">TXT 纯文本</span><span class="bseas-dl-option-desc">纯文字内容，便于阅读和复制</span></span></label><label class="bseas-dl-option"><input type="radio" name="bseas-dl-format" value="srt"><span class="bseas-dl-option-content"><span class="bseas-dl-option-title">SRT 字幕文件</span><span class="bseas-dl-option-desc">带时间轴，适合视频播放器加载</span></span></label></div><div class="bseas-dl-ts-row" id="bseas-dl-ts-row"><label class="bseas-dl-ts-label"><input type="checkbox" id="bseas-dl-ts" ${downloadShowTimestamps ? 'checked' : ''}><span>包含时间戳</span></label></div></div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-dl-confirm">下载</button></div></div>`);
+        document.body.appendChild(overlay);
+        const tsRow = overlay.querySelector('#bseas-dl-ts-row');
+        const updateTsVisibility = () => {
+            const checked = overlay.querySelector('input[name="bseas-dl-format"]:checked');
+            if (!checked) return;
+            tsRow.style.display = checked.value === 'txt' ? 'flex' : 'none';
+        };
+        overlay.querySelectorAll('input[name="bseas-dl-format"]').forEach(r => r.addEventListener('change', () => {
+            overlay.querySelectorAll('.bseas-dl-option').forEach(o => o.classList.remove('checked'));
+            r.closest('.bseas-dl-option').classList.add('checked');
+            updateTsVisibility();
+        }));
+        updateTsVisibility();
+        overlay.querySelector('#bseas-dl-ts').addEventListener('change', e => {
+            downloadShowTimestamps = e.target.checked;
+            GM_setValue('bseas_download_show_timestamps', downloadShowTimestamps);
+        });
+        const closeDl = () => {
+            const modal = overlay.querySelector('.bseas-edit-modal');
+            if (modal) { modal.classList.add('closing'); overlay.classList.add('closing'); setTimeout(() => overlay.remove(), 200); }
+            else overlay.remove();
+            document.removeEventListener('keydown', escHandler);
+        };
+        overlay.querySelector('.bseas-edit-modal-btn.cancel').addEventListener('click', closeDl);
+        overlay.querySelector('#bseas-dl-confirm').addEventListener('click', () => {
+            const checked = overlay.querySelector('input[name="bseas-dl-format"]:checked');
+            const fmt = checked ? checked.value : 'txt';
+            closeDl();
+            downloadSubtitle(fmt);
+        });
+        overlay.addEventListener('click', e => { if (e.target === overlay) closeDl(); });
+        const escHandler = e => { if (e.key === 'Escape') closeDl(); };
+        document.addEventListener('keydown', escHandler);
+    }
+
+    let playModeActive = false;
+    let playToastEl = null;
+    let playCtrlEl = null;
+    let playTimeupdateHandler = null;
+    let playSecondSubtitle = null;
+    let playOverlayEscHandler = null;
+    let playVideoRef = null;
+    let playOpacity = GM_getValue('bseas_play_opacity', 0.72);
+    let playFontSize = GM_getValue('bseas_play_fontsize', 19);
+    function isWebFullscreen() {
+        return !!(document.querySelector('#bilibili-player.webfullscreen') || document.querySelector('.bpx-player-container--web-fullscreen') || document.querySelector('.bpx-player-container[data-screen="web"]'));
+    }
+    function togglePlayMode() {
+        if (playModeActive) { stopPlayMode(); return; }
+        if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
+        const video = document.querySelector('#bilibili-player video') || document.querySelector('video');
+        if (!video) { showToast('未找到视频元素', 'warning'); return; }
+        showPlayGuide(video);
+    }
+    function showPlayGuide(video) {
+        const existing = document.querySelector('.bseas-play-guide-overlay');
+        if (existing) { if (playOverlayEscHandler) { document.removeEventListener('keydown', playOverlayEscHandler); playOverlayEscHandler = null; } existing.remove(); }
+        const overlay = document.createElement('div');
+        overlay.className = 'bseas-edit-overlay bseas-play-guide-overlay';
+        const allOpts = allSubtitles.slice();
+        const zhSub = allOpts.find(s => /^zh/i.test(s.lan) || /[\u4e00-\u9fa5]/.test(s.lan_doc || ''));
+        const defaultFirstId = zhSub ? zhSub.id : (allOpts[0] ? allOpts[0].id : '');
+        const otherOpts = allOpts.filter(s => String(s.id) !== String(defaultFirstId));
+        const makeOpt = (s) => `<option value="${escapeHtml(String(s.id))}">${escapeHtml(s.lan_doc || s.lan || '')}</option>`;
+        safeSetInnerHTML(overlay, `<div class="bseas-play-guide"><div class="bseas-play-guide-title">播放模式</div><div class="bseas-play-guide-desc">建议先进入「网页全屏」（非全屏），悬浮控件可漂浮在视频上方。</div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">第一语言</span><select id="bseas-play-first">${allOpts.map(makeOpt).join('')}</select></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">第二语言</span><select id="bseas-play-second"><option value="">关闭</option>${otherOpts.map(makeOpt).join('')}</select></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">底色透明度</span><div class="bseas-play-guide-slider"><input type="range" id="bseas-play-opacity" min="0" max="1" step="0.05" value="${playOpacity}"><span id="bseas-play-opacity-val">${Math.round(playOpacity * 100)}%</span></div></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">文字大小</span><div class="bseas-play-guide-slider"><input type="range" id="bseas-play-fontsize" min="12" max="36" step="1" value="${playFontSize}"><span id="bseas-play-fontsize-val">${playFontSize}px</span></div></div><div class="bseas-play-guide-btns"><button class="bseas-edit-modal-btn cancel" id="bseas-play-guide-cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-play-guide-go">开始播放</button></div></div>`);
+        document.body.appendChild(overlay);
+        const firstSel = overlay.querySelector('#bseas-play-first');
+        if (firstSel) firstSel.value = String(defaultFirstId);
+        const secondSel = overlay.querySelector('#bseas-play-second');
+        const rebuildSecondOpts = () => {
+            if (!firstSel || !secondSel) return;
+            const curFirst = firstSel.value;
+            const curSecond = secondSel.value;
+            const opts = allOpts.filter(s => String(s.id) !== String(curFirst));
+            secondSel.innerHTML = `<option value="">关闭</option>${opts.map(makeOpt).join('')}`;
+            if (opts.some(s => String(s.id) === String(curSecond))) secondSel.value = curSecond;
+        };
+        if (firstSel) firstSel.addEventListener('change', rebuildSecondOpts);
+        const opacityInput = overlay.querySelector('#bseas-play-opacity');
+        const opacityVal = overlay.querySelector('#bseas-play-opacity-val');
+        const fontsizeInput = overlay.querySelector('#bseas-play-fontsize');
+        const fontsizeVal = overlay.querySelector('#bseas-play-fontsize-val');
+        const previewEl = document.createElement('div');
+        previewEl.style.cssText = `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,${playOpacity});backdrop-filter:blur(8px) saturate(140%);-webkit-backdrop-filter:blur(8px) saturate(140%);color:#fff;padding:10px 20px;border-radius:10px;font-size:${playFontSize}px;font-weight:500;z-index:100002;pointer-events:none;white-space:nowrap;transition:background 0.15s, font-size 0.15s;box-shadow:0 4px 20px rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);`;
+        previewEl.textContent = '示例字幕预览效果';
+        document.body.appendChild(previewEl);
+        const updatePreview = () => { previewEl.style.background = `rgba(0,0,0,${opacityInput.value})`; previewEl.style.fontSize = fontsizeInput.value + 'px'; };
+        opacityInput.addEventListener('input', () => { opacityVal.textContent = Math.round(opacityInput.value * 100) + '%'; updatePreview(); });
+        fontsizeInput.addEventListener('input', () => { fontsizeVal.textContent = fontsizeInput.value + 'px'; updatePreview(); });
+        let guideCancelled = false;
+        const closeGuide = (byUser) => { if (byUser) guideCancelled = true; document.removeEventListener('keydown', playOverlayEscHandler); playOverlayEscHandler = null; previewEl.remove(); overlay.querySelector('.bseas-play-guide')?.classList.add('closing'); overlay.classList.add('closing'); setTimeout(() => { overlay.remove(); }, 200); };
+        overlay.querySelector('#bseas-play-guide-cancel').addEventListener('click', () => closeGuide(true));
+        overlay.querySelector('#bseas-play-guide-go').addEventListener('click', async (e) => {
+            const goBtn = e.currentTarget;
+            if (goBtn.disabled) return;
+            goBtn.disabled = true;
+            playOpacity = parseFloat(opacityInput.value);
+            playFontSize = parseInt(fontsizeInput.value, 10);
+            GM_setValue('bseas_play_opacity', playOpacity);
+            GM_setValue('bseas_play_fontsize', playFontSize);
+            const firstId = firstSel ? firstSel.value : '';
+            const secondId = overlay.querySelector('#bseas-play-second').value;
+            const firstSub = firstId ? allSubtitles.find(s => String(s.id) === String(firstId)) : currentSubtitleData;
+            playSecondSubtitle = secondId ? allSubtitles.find(s => String(s.id) === String(secondId)) : null;
+            if (playSecondSubtitle && !playSecondSubtitle.body?.length && playSecondSubtitle.subtitle_url) {
+                playSecondSubtitle.body = await fetchSubtitleContent(playSecondSubtitle.subtitle_url);
+            }
+            if (guideCancelled) return;
+            closeGuide(false);
+            if (firstSub && !firstSub.body?.length && firstSub.subtitle_url) {
+                setLoadingState(true);
+                firstSub.body = await fetchSubtitleContent(firstSub.subtitle_url);
+                setLoadingState(false);
+            }
+            if (!firstSub?.body?.length) { showToast('字幕内容加载失败，请重试', 'error'); return; }
+            startPlayMode(video, firstSub);
+        });
+        overlay.addEventListener('click', e => { if (e.target === overlay) closeGuide(true); });
+        playOverlayEscHandler = e => { if (e.key === 'Escape') closeGuide(true); };
+        document.addEventListener('keydown', playOverlayEscHandler);
+    }
+    function startPlayMode(video, firstSub) {
+        playModeActive = true;
+        playVideoRef = video;
+        if (firstSub && firstSub !== currentSubtitleData) {
+            currentSubtitleData = firstSub;
+            selectedSubtitleId = firstSub.id;
+        }
+        playToastEl = document.createElement('div');
+        playToastEl.className = 'bseas-play-toast empty';
+        playToastEl.style.background = `rgba(0,0,0,${playOpacity})`;
+        playToastEl.style.fontSize = playFontSize + 'px';
+        document.body.appendChild(playToastEl);
+        playTimeupdateHandler = () => updatePlayToast(video);
+        video.addEventListener('timeupdate', playTimeupdateHandler);
+        updatePlayToast(video);
+    }
+    function updatePlayToast(video) {
+        if (!playToastEl) return;
+        const t = video.currentTime;
+        const findLine = (data) => {
+            if (!data?.body) return '';
+            const item = data.body.find(it => t >= it.from && t <= it.to);
+            return item ? (item.content || '') : '';
+        };
+        const line1 = findLine(currentSubtitleData);
+        const line2 = playSecondSubtitle ? findLine(playSecondSubtitle) : '';
+        if (!line1 && !line2) {
+            playToastEl.classList.add('empty');
+        } else {
+            playToastEl.classList.remove('empty');
+            let html = '';
+            if (line1) html += `<div class="bseas-play-line1">${escapeHtml(line1)}</div>`;
+            if (line2) html += `<div class="bseas-play-line2">${escapeHtml(line2)}</div>`;
+            safeSetInnerHTML(playToastEl, html);
+        }
+    }
+    function stopPlayMode() {
+        playModeActive = false;
+        if (playVideoRef && playTimeupdateHandler) playVideoRef.removeEventListener('timeupdate', playTimeupdateHandler);
+        playVideoRef = null;
+        playTimeupdateHandler = null;
+        playSecondSubtitle = null;
+        if (playToastEl) { playToastEl.remove(); playToastEl = null; }
+        if (playCtrlEl) { playCtrlEl.remove(); playCtrlEl = null; }
+    }
+
+    let followModeActive = false;
+    let followTimeupdateHandler = null;
+    let followCheckInterval = null;
+    let followVideoRef = null;
+    let followLastIdx = -1;
+    function toggleFollowMode() {
+        if (followModeActive) { stopFollowMode(); return; }
+        const video = document.querySelector('#bilibili-player video') || document.querySelector('video');
+        if (!video) { showToast('未找到视频元素', 'warning'); return; }
+        if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
+        if (currentTab !== 'preview') { showToast('请先切换到浏览页', 'warning'); return; }
+        startFollowMode(video);
+    }
+    function startFollowMode(video) {
+        followModeActive = true;
+        followVideoRef = video;
+        followLastIdx = -1;
+        const btn = document.getElementById('bseas-follow-btn');
+        if (btn) btn.classList.add('active');
+        followTimeupdateHandler = () => scrollFollowToCurrent(video);
+        video.addEventListener('timeupdate', followTimeupdateHandler);
+        scrollFollowToCurrent(video);
+        showToast('字幕跟随已开启', 'success');
+    }
+    function scrollFollowToCurrent(video) {
+        if (!followModeActive || currentTab !== 'preview' || !panelVisible) return;
+        const content = document.querySelector('.bseas-content');
+        if (!content) return;
+        const body = currentSubtitleData?.body;
+        if (!body?.length) return;
+        const t = video.currentTime;
+        let idx = -1;
+        for (let i = 0; i < body.length; i++) {
+            if (t >= body[i].from && t <= body[i].to) { idx = i; break; }
+        }
+        if (idx === -1) {
+            for (let i = body.length - 1; i >= 0; i--) {
+                if (body[i].to < t) { idx = i; break; }
+            }
+        }
+        if (idx === -1) idx = 0;
+        if (idx === followLastIdx) return;
+        followLastIdx = idx;
+        const limit = currentPreviewLimit > 0 ? currentPreviewLimit : bseas_max_preview_subtitles;
+        if (idx >= limit) {
+            currentPreviewLimit = Math.ceil((idx + 1) / bseas_max_preview_subtitles) * bseas_max_preview_subtitles;
+            updatePreviewList();
+        }
+        const items = content.querySelectorAll('.bseas-subtitle-item');
+        const target = items[idx];
+        if (!target) return;
+        content.querySelectorAll('.bseas-subtitle-item.current-follow').forEach(el => el.classList.remove('current-follow'));
+        target.classList.add('current-follow');
+        const targetTop = target.offsetTop;
+        const targetH = target.clientHeight;
+        content.scrollTo({
+            top: targetTop - content.clientHeight / 2 + targetH / 2,
+            behavior: 'smooth'
+        });
+    }
+    function stopFollowMode() {
+        followModeActive = false;
+        const btn = document.getElementById('bseas-follow-btn');
+        if (btn) btn.classList.remove('active');
+        if (followVideoRef && followTimeupdateHandler) followVideoRef.removeEventListener('timeupdate', followTimeupdateHandler);
+        followVideoRef = null;
+        followTimeupdateHandler = null;
+        followLastIdx = -1;
+        document.querySelectorAll('.bseas-subtitle-item.current-follow').forEach(el => el.classList.remove('current-follow'));
+    }
+    function updateFollowBtnVisibility() {
+        const btn = document.getElementById('bseas-follow-btn');
+        if (!btn) return;
+        const shouldShow = panelVisible && currentTab === 'preview' && !!currentSubtitleData?.body?.length;
+        if (!shouldShow) { btn.style.display = 'none'; return; }
+        const video = document.querySelector('#bilibili-player video') || document.querySelector('video');
+        const videoStarted = video && video.currentTime > 0.5;
+        btn.style.display = videoStarted ? 'flex' : 'none';
+    }
+    function startFollowCheck() {
+        if (followCheckInterval) clearInterval(followCheckInterval);
+        followCheckInterval = setInterval(updateFollowBtnVisibility, 1000);
+    }
 
     // ===================== 18. 文本格式化 =====================
     function getFormattedText() {
         if (!currentSubtitleData?.body) return '';
-        return currentSubtitleData.body.map(it => showTimestamps ? `[${formatTimeWithMs(it.from)} - ${formatTimeWithMs(it.to)}] ${it.content}` : it.content).join('\n');
+        return currentSubtitleData.body.map(it => textShowTimestamps ? `[${formatTimeWithMs(it.from)} - ${formatTimeWithMs(it.to)}] ${it.content}` : it.content).join('\n');
+    }
+    function getFormattedTextForDownload() {
+        if (!currentSubtitleData?.body) return '';
+        return currentSubtitleData.body.map(it => downloadShowTimestamps ? `[${formatTimeWithMs(it.from)} - ${formatTimeWithMs(it.to)}] ${it.content}` : it.content).join('\n');
     }
     function getSRTText() {
         if (!currentSubtitleData?.body) return '';
@@ -1998,49 +2794,72 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     function updateUI() {
         const info = document.querySelector('.bseas-subtitle-info');
         const copyBtn = document.querySelector('#bseas-copy-btn');
-        const dlTxtBtn = document.querySelector('#bseas-download-txt-btn');
-        const dlSrtBtn = document.querySelector('#bseas-download-srt-btn');
+        const playBtn = document.querySelector('#bseas-play-btn');
+        const dlBtn = document.querySelector('#bseas-download-btn');
         const sb = document.querySelector('#bseas-source-body');
         if (sb) {
             if (allSubtitles.length > 0) {
                 const optsHtml = allSubtitles.map(s => {
-                    const tag = s.id === 'ai-corrected'
-                        ? (s.editMethod === 'manual'
+                    let tag;
+                    if (s.isUserEdited) {
+                        tag = `<span class="bseas-tag ai bseas-tag-check"><svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></span>`;
+                    } else if (s.id === 'ai-corrected') {
+                        tag = (s.editMethod === 'manual'
                             ? `<span class="bseas-tag ai bseas-tag-check"><svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></span>`
-                            : `<span class="bseas-tag ai bseas-tag-check"><svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>`)
-                        : `<span class="bseas-tag ${s.isAI ? 'ai' : 'cc'}">${s.isAI ? 'AI' : 'CC'}</span>`;
-                    return `<div class="bseas-subtitle-option ${s.id === selectedSubtitleId ? 'active' : ''}" data-id="${escapeHtml(s.id)}">${escapeHtml(s.lan_doc)}${tag}</div>`;
+                            : `<span class="bseas-tag ai bseas-tag-check"><svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></span>`);
+                    } else {
+                        tag = `<span class="bseas-tag ${s.isAI ? 'ai' : 'cc'}">${s.isAI ? 'AI' : 'CC'}</span>`;
+                    }
+                    const delBtn = s.isUserEdited ? `<span class="bseas-subtitle-del" data-del-id="${escapeHtml(s.id)}" title="删除此字幕"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg></span>` : '';
+                    return `<div class="bseas-subtitle-option ${s.id === selectedSubtitleId ? 'active' : ''}" data-id="${escapeHtml(s.id)}">${escapeHtml(s.lan_doc)}${tag}${delBtn}</div>`;
                 }).join('');
                 const showEditBtn = currentSubtitleData?.body?.length;
-                const showCorrectBtn = currentSubtitleData?.body?.length && currentSubtitleData?.id !== 'ai-corrected';
-                let btnsHtml = '';
-                if (showEditBtn || showCorrectBtn) {
-                    btnsHtml = '<div class="bseas-correct-btns">';
-                    if (showEditBtn) {
-                        btnsHtml += `<div class="bseas-correct-op edit" id="bseas-edit-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg><span>编辑字幕</span></div>`;
-                    }
-                    if (showCorrectBtn) {
-                        btnsHtml += `<div class="bseas-correct-op${bseas_disable_api ? ' disabled' : ''}" id="bseas-ai-correct-btn"${bseas_disable_api ? ' title="此功能在「禁用 API」启用时不可用"' : ''}><div class="bseas-correct-progress"></div><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>AI修正字幕</span></div>`;
-                    }
-                    btnsHtml += '</div>';
+                const showCorrectBtn = currentSubtitleData?.body?.length && currentSubtitleData?.id !== 'ai-corrected' && !currentSubtitleData?.isUserEdited;
+                let btnsHtml = '<div class="bseas-correct-btns">';
+                if (showEditBtn) {
+                    btnsHtml += `<div class="bseas-correct-op edit" id="bseas-edit-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg><span>编辑字幕</span></div>`;
                 }
+                if (showCorrectBtn) {
+                    btnsHtml += `<div class="bseas-correct-op${bseas_disable_api ? ' disabled' : ''}" id="bseas-ai-correct-btn"${bseas_disable_api ? ' title="此功能在「禁用 API」启用时不可用"' : ''}><div class="bseas-correct-progress"></div><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>AI修正字幕</span></div>`;
+                }
+                btnsHtml += `<div class="bseas-correct-op edit" id="bseas-new-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg><span>新建字幕</span></div>`;
+                btnsHtml += '</div>';
                 safeSetInnerHTML(sb, optsHtml + btnsHtml);
                 sb.querySelectorAll('.bseas-subtitle-option[data-id]').forEach(o => o.addEventListener('click', (e) => {
+                    if (e.target.closest('.bseas-subtitle-del')) return;
                     e.stopPropagation();
                     const s = allSubtitles.find(x => String(x.id) === String(o.dataset.id));
                     if (s) loadSubtitle(s);
                 }));
+                sb.querySelectorAll('.bseas-subtitle-del[data-del-id]').forEach(d => d.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const id = d.dataset.delId;
+                    deleteUserSubtitleItem(currentVideoKey, id);
+                    const idx = allSubtitles.findIndex(s => String(s.id) === String(id));
+                    if (idx >= 0) allSubtitles.splice(idx, 1);
+                    if (String(selectedSubtitleId) === String(id)) {
+                        selectedSubtitleId = null;
+                        currentSubtitleData = null;
+                        if (allSubtitles.length > 0) loadSubtitle(allSubtitles[0]);
+                        else updateUI();
+                    } else {
+                        updateUI();
+                    }
+                    showToast('已删除该字幕', 'success');
+                }));
                 document.getElementById('bseas-ai-correct-btn')?.addEventListener('click', (e) => { e.stopPropagation(); if (e.currentTarget.classList.contains('disabled')) return; runAICorrectSubtitle(); });
                 document.getElementById('bseas-edit-subtitle-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSubtitleEditor(); });
+                document.getElementById('bseas-new-subtitle-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSRTPasteDialog(); });
             } else {
-                safeSetInnerHTML(sb, '<div style="color:var(--bseas-text-dim);font-size:13px;padding-bottom:4px;">未检测到可用字幕</div>');
+                safeSetInnerHTML(sb, '<div style="color:var(--bseas-text-dim);font-size:13px;padding-bottom:8px;">未检测到可用字幕</div><div class="bseas-correct-btns"><div class="bseas-correct-op edit" id="bseas-new-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg><span>新建字幕</span></div></div>');
+                document.getElementById('bseas-new-subtitle-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSRTPasteDialog(); });
             }
         }
         if (currentSubtitleData?.body) {
             if (info) info.textContent = `成功解析 ${currentSubtitleData.body.length} 条字幕 · ${hotComments.length} 条评论${bseas_save_tokens ? ' · 省 Tokens' : ''}`;
             if (copyBtn) copyBtn.disabled = false;
-            if (dlTxtBtn) dlTxtBtn.disabled = false;
-            if (dlSrtBtn) dlSrtBtn.disabled = false;
+            if (playBtn) playBtn.disabled = false;
+            if (dlBtn) dlBtn.disabled = false;
         } else if (!isLoading) {
             if (info) info.textContent = allSubtitles.length === 0 ? '此视频暂无字幕' : '准备就绪';
         }
@@ -2471,10 +3290,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 else html += `<div class="bseas-sp-box status-err"><div class="bseas-sp-header"><span class="bseas-sp-icon">⚠</span><span class="bseas-sp-title">广告时间段格式解析异常</span></div></div>`;
                 const displaySummary = stripAdLine(cachedSummary);
                 html += `<div style="position:relative;">${retryHtml}<div class="bseas-ai-result bseas-markdown" id="bseas-ai-result"></div></div>`;
-                if (cachedQA.length) html += cachedQA.map(qa => `<div class="bseas-qa-item"><div class="bseas-qa-q">💭 ${escapeHtml(qa.q)}</div><div class="bseas-qa-a bseas-markdown bseas-qa-md"></div></div>`).join('');
+                if (cachedQA.length) html += cachedQA.map(qa => `<div class="bseas-qa-item"><div class="bseas-qa-q">${ASK_ICON_SVG}<span>${escapeHtml(qa.q)}</span></div><div class="bseas-qa-a bseas-markdown bseas-qa-md"></div></div>`).join('');
                 if (isGeneratingAI && currentFollowupQ) {
                     const followupHtml = currentFollowupText ? markdownToHtml(currentFollowupText) : '<div style="display:flex;align-items:center;gap:8px;color:var(--bseas-text-muted);"><span class="bseas-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div>';
-                    html += `<div class="bseas-qa-item"><div class="bseas-qa-q">💭 ${escapeHtml(currentFollowupQ)}</div><div class="bseas-qa-a bseas-markdown" id="bseas-stream-followup">${followupHtml}</div></div>`;
+                    html += `<div class="bseas-qa-item"><div class="bseas-qa-q">${ASK_ICON_SVG}<span>${escapeHtml(currentFollowupQ)}</span></div><div class="bseas-qa-a bseas-markdown" id="bseas-stream-followup">${followupHtml}</div></div>`;
                 }
                 if (!bseas_disable_api) {
                     html += `<div class="bseas-followup-section"><div class="bseas-followup-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>追问</div><textarea class="bseas-followup-input" id="bseas-followup-input" placeholder="就视频内容提问" ${isGeneratingAI ? 'disabled' : ''}></textarea><button class="bseas-followup-btn" id="bseas-followup-btn" ${isGeneratingAI ? 'disabled' : ''}>${isGeneratingAI ? '生成中...' : '发送追问'}</button></div>`;
@@ -2582,7 +3401,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 const answerId = 'bseas-stream-followup';
                 const qaEl = document.createElement('div');
                 qaEl.className = 'bseas-qa-item';
-                safeSetInnerHTML(qaEl, `<div class="bseas-qa-q">💭 ${escapeHtml(q)}</div><div class="bseas-qa-a bseas-markdown" id="${answerId}"><div style="display:flex;align-items:center;gap:8px;color:var(--bseas-text-muted);"><span class="bseas-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div></div>`);
+                safeSetInnerHTML(qaEl, `<div class="bseas-qa-q">${ASK_ICON_SVG}<span>${escapeHtml(q)}</span></div><div class="bseas-qa-a bseas-markdown" id="${answerId}"><div style="display:flex;align-items:center;gap:8px;color:var(--bseas-text-muted);"><span class="bseas-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div></div>`);
                 followupSection.insertAdjacentElement('beforebegin', qaEl);
                 const ansEl = document.getElementById(answerId);
                 aiConversationHistory.push({ role: 'user', content: q });
@@ -2615,8 +3434,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     // ===================== 22. 文本页渲染 =====================
     function renderTextTab(el) {
         if (!currentSubtitleData?.body?.length) { safeSetInnerHTML(el, '<div class="bseas-empty">暂无数据</div>'); return; }
-        safeSetInnerHTML(el, `<div class="bseas-text-controls"><label class="bseas-checkbox-label"><input type="checkbox" id="bseas-ts-toggle" ${showTimestamps ? 'checked' : ''}>包含时间戳</label><span id="bseas-ts-hint" style="font-size:12px;color:var(--bseas-text-muted);">${showTimestamps ? '格式:[MM:SS.ms] 将同步影响.txt文件下载' : '将同步影响.txt文件下载'}</span></div><textarea class="bseas-text-area" id="bseas-text-out" readonly>${escapeHtml(getFormattedText())}</textarea>`);
-        document.getElementById('bseas-ts-toggle')?.addEventListener('change', e => { showTimestamps = e.target.checked; GM_setValue('bseas_show_timestamps', showTimestamps); document.getElementById('bseas-text-out').value = getFormattedText(); const hint = document.getElementById('bseas-ts-hint'); if (hint) hint.textContent = showTimestamps ? '格式:[MM:SS.ms] 将同步影响.txt文件下载' : '将同步影响.txt文件下载'; });
+        safeSetInnerHTML(el, `<div class="bseas-text-controls"><label class="bseas-checkbox-label"><input type="checkbox" id="bseas-ts-toggle" ${textShowTimestamps ? 'checked' : ''}>包含时间戳</label><span id="bseas-ts-hint" style="font-size:12px;color:var(--bseas-text-muted);">格式:[MM:SS.ms]</span></div><textarea class="bseas-text-area" id="bseas-text-out" readonly>${escapeHtml(getFormattedText())}</textarea>`);
+        document.getElementById('bseas-ts-toggle')?.addEventListener('change', e => { textShowTimestamps = e.target.checked; GM_setValue('bseas_text_show_timestamps', textShowTimestamps); document.getElementById('bseas-text-out').value = getFormattedText(); });
     }
 
     // ===================== 23. 设置页渲染 =====================
@@ -3067,6 +3886,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         log('B站字幕获取、AI分析及广告跳过工具 v' + SCRIPT_VERSION + ' 已加载。作者：LiuMashiro');
         aiSummaryCache = loadCache();
         createUI();
+        startFollowCheck();
         setTimeout(() => { fetchAllSubtitles(); initAdSkipMonitor(); }, AUTO_FETCH_DELAY_MS);
         setTimeout(() => { if (bseas_update_mode !== 'disabled') checkForUpdates(); checkStorageSize(); }, 5000);
     }
@@ -3082,6 +3902,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         currentFollowupText = '';
         progressMarkInitialized = false;
         lastAdCheckResult = null; adDetectionNotified = false;
+        if (playModeActive) stopPlayMode();
+        if (followModeActive) stopFollowMode();
         currentVideoKey = null;
         currentAid = null;
         hotComments = [];
