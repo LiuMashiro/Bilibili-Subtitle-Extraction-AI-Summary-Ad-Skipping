@@ -22,7 +22,7 @@ All notable changes to this project will be documented in this file.
 - 调整面板最大宽高度，防止太宽、太高（超出浏览器）
 - 按钮文字防溢出处理
 - 当弹窗出现半透明蒙版时，触发按钮图标以外检测到底色偏深故而变色的问题
-- 
+
 
 ## [2.4.0]
 
