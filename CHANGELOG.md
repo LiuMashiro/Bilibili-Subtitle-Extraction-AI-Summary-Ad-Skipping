@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.4.4]
+
+### Added
+- 一键滚动回顶部按钮
+
+### Fixed
+- 面板右侧拖动区会阻碍拖动滚动条的问题
+
 ## [2.4.3]
 
 ### Added
