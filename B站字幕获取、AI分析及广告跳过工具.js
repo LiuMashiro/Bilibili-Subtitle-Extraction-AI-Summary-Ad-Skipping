@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.4.2
+// @version      2.4.3
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,7 +39,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.4.2';
+    const SCRIPT_VERSION = '2.4.3';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -340,11 +340,38 @@
         .bseas-resize-edge { position:absolute; z-index:40; pointer-events:auto; }
         .bseas-resize-edge.left { left:0; top:0; width:6px; height:100%; cursor:ew-resize; }
         .bseas-resize-edge.right { right:0; top:0; width:6px; height:100%; cursor:ew-resize; }
-        .bseas-resize-edge.bottom { left:6px; right:6px; bottom:0; height:4px; cursor:ns-resize; }
+        .bseas-resize-edge.top { left:6px; right:6px; top:0; height:4px; cursor:ns-resize; }
+        .bseas-resize-edge.bottom { left:6px; right:6px; bottom:0; height:5px; cursor:ns-resize; }
         .bseas-resize-edge:hover { background:rgba(0,174,236,0.12); }
-        .bseas-resize-edge.bottom::after { content:''; position:absolute; left:50%; top:50%; transform:translate(-50%,-65%); width:54px; height:3px; border-radius:3px; background:rgba(148,163,184,0.4); transition:background 0.2s; pointer-events:none; }
-        .bseas-resize-edge.left::after { content:''; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:3px; height:64px; border-radius:3px; background:rgba(148,163,184,0.4); transition:background 0.2s; pointer-events:none; }
-        .bseas-resize-edge.bottom:hover::after, .bseas-resize-edge.left:hover::after { background:rgba(0,174,236,0.55); }
+        .bseas-resize-edge::after { content:''; position:absolute; left:50%; top:50%; border-radius:3px; background:rgba(148,163,184,0.7); transition:background 0.2s, opacity 0.4s; opacity:0; pointer-events:none; }
+        .bseas-resize-edge.bottom::after { transform:translate(-50%,-65%); width:62px; height:4px; }
+        .bseas-resize-edge.top::after { transform:translate(-50%,-35%); width:54px; height:3px; }
+        .bseas-resize-edge.left::after { transform:translate(-50%,-50%); width:3px; height:64px; }
+        .bseas-resize-edge.right::after { transform:translate(-50%,-50%); width:3px; height:64px; }
+        .bseas-resize-edge:hover::after { background:rgba(0,174,236,0.55); }
+
+        .bseas-panel.show.trigger-h-right .bseas-resize-edge.left::after,
+        .bseas-panel.show.trigger-h-left .bseas-resize-edge.right::after,
+        .bseas-panel.show.trigger-v-top .bseas-resize-edge.bottom::after,
+        .bseas-panel.show.trigger-v-bottom .bseas-resize-edge.top::after { opacity:0.6; }
+
+        .bseas-panel.show.indicators-faded .bseas-resize-edge::after { opacity:0 !important; }
+
+        .bseas-panel.resizing.trigger-h-right .bseas-resize-edge.left::after,
+        .bseas-panel.resizing.trigger-h-left .bseas-resize-edge.right::after,
+        .bseas-panel.resizing.trigger-v-top .bseas-resize-edge.bottom::after,
+        .bseas-panel.resizing.trigger-v-bottom .bseas-resize-edge.top::after { opacity:0.6 !important; }
+
+        .bseas-resize-corner { position:absolute; z-index:41; width:14px; height:14px; pointer-events:auto; display:none; }
+        .bseas-resize-corner.corner-bl { left:0; bottom:0; cursor:nesw-resize; }
+        .bseas-resize-corner.corner-br { right:0; bottom:0; cursor:nwse-resize; }
+        .bseas-resize-corner.corner-tl { left:0; top:0; cursor:nwse-resize; }
+        .bseas-resize-corner.corner-tr { right:0; top:0; cursor:nesw-resize; }
+        .bseas-resize-corner:hover { background:rgba(0,174,236,0.16); border-radius:3px; }
+        .bseas-panel.show.trigger-h-right.trigger-v-top .bseas-resize-corner.corner-bl,
+        .bseas-panel.show.trigger-h-left.trigger-v-top .bseas-resize-corner.corner-br,
+        .bseas-panel.show.trigger-h-right.trigger-v-bottom .bseas-resize-corner.corner-tl,
+        .bseas-panel.show.trigger-h-left.trigger-v-bottom .bseas-resize-corner.corner-tr { display:block; }
         .bseas-header { padding:10px 22px 6px; border-bottom:1px solid var(--bseas-border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
         .bseas-header-text { cursor:move; flex:1; min-width:0; }
         .bseas-title { font-size:16px; font-weight:700; color:var(--bseas-text); margin:0; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -418,6 +445,7 @@
         .bseas-edit-modal-btn.cancel:hover { background:rgba(120,120,128,0.15); }
         .bseas-edit-modal-btn.save { background:var(--bseas-primary); color:white; }
         .bseas-edit-modal-btn.save:hover { transform:translateY(-1px); box-shadow:0 2px 8px rgba(0,174,236,0.3); }
+        .bseas-edit-modal-btn#bseas-edit-export-srt:hover { transform:translateY(-1px); background:rgba(0,174,236,0.18); box-shadow:0 2px 8px rgba(0,174,236,0.15); }
         .bseas-dl-format-group { display:flex; flex-direction:column; gap:10px; }
         .bseas-dl-option { display:flex; align-items:flex-start; gap:10px; padding:12px; border:1.5px solid var(--bseas-border); border-radius:10px; cursor:pointer; transition:all 0.2s; }
         .bseas-dl-option:hover { border-color:var(--bseas-primary); background:rgba(0,174,236,0.03); }
@@ -429,7 +457,8 @@
         .bseas-dl-option-content { display:flex; flex-direction:column; gap:2px; }
         .bseas-dl-option-title { font-size:14px; font-weight:600; color:var(--bseas-text); }
         .bseas-dl-option-desc { font-size:12px; color:var(--bseas-text-muted); }
-        .bseas-dl-ts-row { display:flex; align-items:center; justify-content:space-between; margin-top:16px; padding:10px 12px; background:var(--bseas-bg-card); border-radius:8px; }
+        .bseas-dl-ts-row { display:flex; align-items:center; justify-content:space-between; margin-top:16px; padding:10px 12px; background:var(--bseas-bg-card); border-radius:8px; max-height:60px; opacity:1; overflow:hidden; transition:max-height 0.12s ease, opacity 0.1s ease, margin-top 0.12s ease, padding 0.12s ease; }
+        .bseas-dl-ts-row.hidden { max-height:0; opacity:0; margin-top:0; padding-top:0; padding-bottom:0; }
         .bseas-dl-ts-label { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:500; color:var(--bseas-text); cursor:pointer; user-select:none; transition:color 0.2s; }
         .bseas-dl-ts-label:hover { color:var(--bseas-primary); }
         .bseas-dl-ts-label input[type="checkbox"] { appearance:none; -webkit-appearance:none; width:20px; height:20px; border:1.5px solid #cbd5e1; border-radius:6px; cursor:pointer; margin:0; flex-shrink:0; transition:border-color 0.2s, background-color 0.2s, box-shadow 0.2s; position:relative; background:#fff; outline:none; }
@@ -452,9 +481,9 @@
         .bseas-play-ctrl button:hover { background:rgba(255,255,255,0.15); }
         .bseas-play-ctrl button svg { width:18px; height:18px; fill:currentColor; }
         .bseas-play-guide { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:white; border-radius:14px; padding:24px 28px; z-index:100030; box-shadow:0 8px 40px rgba(0,0,0,0.25); max-width:420px; width:90%; animation:bseas-play-guide-in 0.24s var(--ease-spring); }
-        @keyframes bseas-play-guide-in { from{opacity:0; transform:translate(-50%,-50%) scale(0.92)} to{opacity:1; transform:translate(-50%,-50%) scale(1)} }
-        .bseas-play-guide.closing { animation:bseas-play-guide-out 0.18s var(--ease-out) forwards; }
-        @keyframes bseas-play-guide-out { from{opacity:1; transform:translate(-50%,-50%) scale(1)} to{opacity:0; transform:translate(-50%,-50%) scale(0.94)} }
+        @keyframes bseas-play-guide-in { from{opacity:0; transform:translate(-50%,calc(-50% - 60px)) scale(0.96)} to{opacity:1; transform:translate(-50%,-50%) scale(1)} }
+        .bseas-play-guide.closing { animation:bseas-play-guide-out 0.2s var(--ease-out) forwards; }
+        @keyframes bseas-play-guide-out { from{opacity:1; transform:translate(-50%,-50%) scale(1)} to{opacity:0; transform:translate(-50%,calc(-50% - 60px)) scale(0.96)} }
         .bseas-play-guide-title { font-size:17px; font-weight:700; color:var(--bseas-text); margin-bottom:6px; text-align:center; }
         .bseas-play-guide-desc { font-size:12px; color:var(--bseas-text-muted); line-height:1.5; margin-bottom:16px; text-align:center; }
         .bseas-play-guide-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:10px; }
@@ -468,11 +497,11 @@
         .bseas-play-guide-slider input[type="range"]::-moz-range-track { height:5px; border-radius:3px; background:rgba(0,174,236,0.2); }
         .bseas-play-guide-slider span { font-size:12px; color:var(--bseas-text-muted); min-width:32px; text-align:right; }
         .bseas-play-guide-btns { display:flex; gap:10px; justify-content:center; margin-top:16px; }
-        .bseas-follow-btn { position:absolute; right:16px; bottom:112px; width:38px; height:38px; border-radius:50%; background:#fff; color:var(--bseas-primary); border:1px solid var(--bseas-border); cursor:pointer; display:none; align-items:center; justify-content:center; z-index:30; transition:all 0.2s; }
-        .bseas-follow-btn:hover { transform:scale(1.1); border-color:#cbd5e1; }
+        .bseas-follow-btn { position:absolute; right:16px; bottom:96px; padding:8px 16px; border-radius:var(--bseas-radius-md); background:#fff; color:var(--bseas-text); border:1px solid var(--bseas-border); cursor:pointer; display:none; align-items:center; justify-content:center; gap:6px; z-index:30; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); font-size:13px; font-weight:400; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+        .bseas-follow-btn:hover { transform:translateY(-1px); border-color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.18); }
         .bseas-follow-btn.active { background:var(--bseas-primary); color:#fff; border-color:var(--bseas-primary); animation:bseas-follow-pulse 2s ease-in-out infinite; }
-        .bseas-follow-btn svg { width:12px; height:12px; fill:currentColor; transform:translateX(1px); }
-        @keyframes bseas-follow-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.08)} }
+        .bseas-follow-btn svg { width:14px; height:14px; flex-shrink:0; }
+        @keyframes bseas-follow-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
         .bseas-subtitle-item.current-follow { background:rgba(0,174,236,0.1); border-radius:6px; transition:background 0.3s ease; }
         .bseas-search-clear { position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:var(--bseas-text-muted); display:none; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; }
         .bseas-search-clear:hover { background:rgba(0,0,0,0.08); color:var(--bseas-text); }
@@ -722,7 +751,7 @@
         .bseas-btn-secondary:hover:not(:disabled) { background:rgba(248,250,252,0.9); border-color:#cbd5e1; transform:translateY(-1px); box-shadow:0 2px 8px rgba(0,0,0,0.04); }
         .bseas-btn-secondary:active:not(:disabled) { transform:translateY(0); }
         .bseas-btn-secondary:disabled { opacity:0.5; cursor:not-allowed; }
-        .bseas-toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%) translateY(16px) scale(0.95); background:rgba(15,23,42,0.68); backdrop-filter:blur(8px) saturate(140%); -webkit-backdrop-filter:blur(8px) saturate(140%); color:white; padding:12px 24px; border-radius:12px; font-size:14px; font-weight:500; opacity:0; transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.16,1,0.3,1); z-index:100001; pointer-events:none; white-space:nowrap; max-width:80vw; border:1px solid rgba(255,255,255,0.1); box-shadow:0 8px 32px rgba(0,0,0,0.12); }
+        .bseas-toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%) translateY(16px) scale(0.95); background:rgba(15,23,42,0.68); backdrop-filter:blur(8px) saturate(140%); -webkit-backdrop-filter:blur(8px) saturate(140%); color:white; padding:12px 24px; border-radius:12px; font-size:14px; font-weight:500; opacity:0; transition:opacity 0.25s ease,transform 0.25s cubic-bezier(0.16,1,0.3,1); z-index:100050; pointer-events:none; white-space:nowrap; max-width:80vw; border:1px solid rgba(255,255,255,0.1); box-shadow:0 8px 32px rgba(0,0,0,0.12); }
         .bseas-toast.show { opacity:1; transform:translateX(-50%) translateY(0) scale(1); }
         .bseas-toast.success { background:rgba(16,185,129,0.68); }
         .bseas-toast.error { background:rgba(239,68,68,0.68); }
@@ -799,6 +828,7 @@
     let _documentClickHandler = null;
     let _resizeDocHandlers = null;
     let _dragDocHandlers = [];
+    let _indicatorFadeTimer = null;
 
     // ===================== 7. 日志工具 =====================
     function log(...args) { console.log('[BSEAS]', ...args); }
@@ -1277,6 +1307,14 @@
             return d.body || [];
         } catch (e) { return []; }
     }
+    async function prefetchAllSubtitleBodies() {
+        const targets = allSubtitles.filter(s => s.subtitle_url && !s.body?.length);
+        if (targets.length === 0) return;
+        await Promise.all(targets.map(async s => {
+            if (s.body?.length) return;
+            s.body = await fetchSubtitleContent(s.subtitle_url);
+        }));
+    }
     async function fetchHotComments() {
         let aid = currentAid;
         if (!aid) { try { aid = unsafeWindow.__INITIAL_STATE__?.aid; } catch (e) {} }
@@ -1449,26 +1487,26 @@
         const commentsText = hotComments.length > 0 ? formatCommentsForAI() : '';
         if (commentsText) ctx += `\n===== 热门评论（按热度排序，可能含黑话/专有名词的正确表述，仅作修正参考）=====\n${commentsText}\n`;
         const curBody = currentSubtitleData?.body || [];
-        const curJson = JSON.stringify(curBody.map(it => ({ from: it.from, to: it.to, content: it.content })));
+        const curJson = JSON.stringify(curBody.map(it => ({ content: it.content })));
         let otherTracks = '';
         for (const s of allSubtitles) {
             if (s === currentSubtitleData) continue;
             if (!s.body?.length) continue;
-            otherTracks += `\n--- 字幕轨道(${s.lan_doc}) ---\n` + s.body.map(it => `[${formatTime(it.from)} - ${formatTime(it.to)}] ${it.content}`).join('\n');
+            otherTracks += `\n--- 字幕轨道(${s.lan_doc}) ---\n` + s.body.map(it => it.content).join('\n');
         }
         const totalEntries = curBody.length;
         return `你是哔哩哔哩辅助工具的字幕修正模块。请结合视频内容与上下文，修正"当前选中字幕"中的识别错误（错别字、断句、专有名词等），进行推测、润色、优化、修正。
 ${ctx}
-===== 当前选中字幕（JSON 数组，from/to 为秒数即时间戳）=====
+===== 当前选中字幕（JSON 数组，仅含 content 文本）=====
 ${curJson}
 ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正它们）=====' + otherTracks : ''}
 
 要求：
-1. 仅修正每条的 content 文本，from 与 to 数值必须原样保留，不得改变。
+1. 仅修正每条的 content 文本。
 2. 输出数组长度必须严格等于 ${totalEntries} 条，与输入一一对应，严禁合并、拆分、新增或删除任何条目。
 3. 即使某条字幕的 content 需要大幅修正，也必须输出对应的一条，不得跳过或合并到相邻条目。
 4. 完整输出全部条目，不得遗漏。
-5. 直接输出 JSON 数组，格式与输入一致：[{"from":0.5,"to":2.1,"content":"修正后文本"}]
+5. 直接输出 JSON 数组，格式与输入一致：[{"content":"修正后文本"}]
 6. 不要输出任何解释文字，不要用代码块包裹。`;
     }
     function parseCorrectedSubtitleJSON(rawText) {
@@ -1485,12 +1523,11 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         if (!Array.isArray(parsed)) return null;
         const items = parsed.map(it => {
+            if (typeof it === 'string') return it ? { content: it } : null;
             if (!it || typeof it !== 'object') return null;
-            const from = typeof it.from === 'number' ? it.from : parseFloat(it.from);
-            const to = typeof it.to === 'number' ? it.to : parseFloat(it.to);
             const content = typeof it.content === 'string' ? it.content : String(it.content == null ? '' : it.content);
-            if (isNaN(from) || isNaN(to) || !content) return null;
-            return { from, to, content };
+            if (!content) return null;
+            return { content };
         }).filter(Boolean);
         return items.length > 0 ? items : null;
     }
@@ -1756,15 +1793,15 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (currentSubtitleData?.id === 'ai-corrected') { showToast('已修正字幕无需重复修正', 'warning'); return; }
         if (bseas_disable_api) { showToast('已禁用 API，无法修正', 'warning'); return; }
         if (!bseas_api_key) { showToast('未配置 API Key', 'warning'); return; }
-        const correctionText = getTimestampedTextForAI();
+        const correctionText = getPlainSubtitleText();
         if (bseas_confirm_enabled && correctionText.length > bseas_confirm_chars) {
-            if (!confirm(`字幕文字量过多（包含时间戳为 ${correctionText.length} 字），调用 AI 修正可能会消耗较多 Tokens，是否继续？`)) return;
+            if (!confirm(`字幕文字量过多（${correctionText.length} 字），调用 AI 修正可能会消耗较多 Tokens，是否继续？`)) return;
         }
         isCorrectingSubtitle = true;
         const btn = document.getElementById('bseas-ai-correct-btn');
         const bar = btn?.querySelector('.bseas-correct-progress');
         if (btn) { btn.classList.add('loading'); const sp = btn.querySelector('span'); if (sp) sp.textContent = '修正中...'; }
-        const curJson = JSON.stringify(currentSubtitleData.body.map(it => ({ from: it.from, to: it.to, content: it.content })));
+        const curJson = JSON.stringify(currentSubtitleData.body.map(it => ({ content: it.content })));
         startCorrectProgress(bar, curJson.length * 1.1);
         showToast('开始修正字幕，耗时较长，请耐心等候', '');
         try {
@@ -1799,7 +1836,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const videoDur = video ? video.duration : 0;
         const overlay = document.createElement('div');
         overlay.className = 'bseas-edit-overlay bseas-srtpaste-overlay';
-        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal" style="max-width:560px;"><div class="bseas-edit-modal-header"><span>新建字幕 - 粘贴SRT</span></div><div class="bseas-edit-modal-body" style="padding:16px 20px;"><div style="font-size:13px;color:var(--bseas-text-muted);margin-bottom:10px;">请粘贴SRT格式字幕内容${videoDur ? `（视频时长 ${formatTime(videoDur)}）` : ''}：</div><textarea id="bseas-srtpaste-input" class="bseas-text-area" style="width:100%;min-height:260px;font-family:monospace;font-size:13px;resize:vertical;" placeholder="1\n00:00:01,000 --> 00:00:03,000\n字幕内容\n..."></textarea><div id="bseas-srtpaste-hint" style="font-size:12px;color:var(--bseas-text-muted);margin-top:8px;"></div></div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-srtpaste-confirm">解析并编辑</button></div></div>`);
+        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal" style="max-width:560px;"><div class="bseas-edit-modal-header"><span>导入字幕 - 粘贴SRT</span></div><div class="bseas-edit-modal-body" style="padding:16px 20px;"><div style="font-size:13px;color:var(--bseas-text-muted);margin-bottom:10px;">请粘贴SRT格式字幕内容${videoDur ? `（视频时长 ${formatTime(videoDur)}）` : ''}：</div><textarea id="bseas-srtpaste-input" class="bseas-text-area" style="width:100%;min-height:260px;font-family:monospace;font-size:13px;resize:vertical;" placeholder="1\n00:00:01,000 --> 00:00:03,000\n字幕内容\n..."></textarea><div id="bseas-srtpaste-hint" style="font-size:12px;color:var(--bseas-text-muted);margin-top:8px;"></div></div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-srtpaste-confirm">解析并编辑</button></div></div>`);
         document.body.appendChild(overlay);
         const inputEl = overlay.querySelector('#bseas-srtpaste-input');
         const hintEl = overlay.querySelector('#bseas-srtpaste-hint');
@@ -2085,19 +2122,19 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 <div class="bseas-api-warning-container">${showApiWarning ? `<div class="bseas-api-warning"><span class="bseas-api-warning-icon">⚠</span><span class="bseas-api-warning-text">未设置API Key，AI分析功能将无法使用</span><button class="bseas-api-warning-btn" id="bseas-go-settings">去设置</button></div>` : ''}</div>
                 <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-collapse" id="bseas-source-collapse"><div class="bseas-collapse-inner"><div class="bseas-source-body" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div></div></div>
                 <div class="bseas-tabs"><button class="bseas-tab active" data-tab="preview">浏览</button><button class="bseas-tab" data-tab="ai">AI 分析</button><button class="bseas-tab" data-tab="text">文本</button></div></div><div class="bseas-tab-body"><div class="bseas-empty">正在初始化...</div></div></div>
-                <button class="bseas-follow-btn" id="bseas-follow-btn" title="字幕跟随视频滚动"><svg viewBox="0 0 1024 1024"><path d="M882.734114 459.147258l0.024559-0.024559L244.016061 21.12718l-0.199545 0.188288C230.582097 8.748245 212.62819 1.014096 192.840518 1.014096c-40.704051 0-73.699536 32.66905-73.699536 72.996524 0 22.148439-0.954745 65.513086 0 64.572668l0 373.422851 0 393.071354c0 0.325411 0 25.249057 0 44.935422 0 40.302915 32.995485 72.972988 73.699536 72.972988 19.862373 0 37.892005-7.78429 51.125401-20.466124l0.050142 0.025583 638.742613-437.982216-0.024559-0.038886c13.886265-13.270235 22.549575-31.889291 22.549575-52.531424 0-0.050142 0-0.088004 0-0.150426 0-0.050142 0-0.11154 0-0.149403C905.28369 491.048829 896.620379 472.41647 882.734114 459.147258z"/></svg></button>
+                <button class="bseas-follow-btn" id="bseas-follow-btn" title="字幕跟随视频滚动"><svg viewBox="0 0 24 24" fill="none"><path d="M4 8L12 16L20 8" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>跟随视频</span></button>
                 <div class="bseas-footer">
                     <div id="bseas-footer-normal" style="display:flex;gap:12px;width:100%;">
                         <button class="bseas-btn bseas-btn-secondary" id="bseas-play-btn" disabled><svg viewBox="0 0 1024 1024" width="20" height="20"><path fill="currentColor" d="M882.734114 459.147258l0.024559-0.024559L244.016061 21.12718l-0.199545 0.188288C230.582097 8.748245 212.62819 1.014096 192.840518 1.014096c-40.704051 0-73.699536 32.66905-73.699536 72.996524 0 22.148439-0.954745 65.513086 0 64.572668l0 373.422851 0 393.071354c0 0.325411 0 25.249057 0 44.935422 0 40.302915 32.995485 72.972988 73.699536 72.972988 19.862373 0 37.892005-7.78429 51.125401-20.466124l0.050142 0.025583 638.742613-437.982216-0.024559-0.038886c13.886265-13.270235 22.549575-31.889291 22.549575-52.531424 0-0.050142 0-0.088004 0-0.150426 0-0.050142 0-0.11154 0-0.149403C905.28369 491.048829 896.620379 472.41647 882.734114 459.147258z"/></svg>播放</button>
                         <button class="bseas-btn bseas-btn-secondary" id="bseas-download-btn" disabled><svg viewBox="0 0 1024 1024" width="18" height="18"><path fill="currentColor" d="M498.347 824.32l-296.96-296.96c-11.947-11.947-3.414-34.133 13.653-34.133h160.427c11.946 0 20.48-8.534 20.48-20.48V54.613c0-11.946 8.533-20.48 20.48-20.48h189.44c11.946 0 20.48 8.534 20.48 20.48v418.134c0 11.946 8.533 20.48 20.48 20.48h160.426c18.774 0 27.307 22.186 13.654 34.133L525.653 824.32c-6.826 6.827-20.48 6.827-27.306 0zM916.48 989.867H107.52c-18.773 0-35.84-15.36-35.84-35.84 0-18.774 15.36-35.84 35.84-35.84h810.667c18.773 0 35.84 15.36 35.84 35.84-1.707 20.48-17.067 35.84-37.547 35.84z"/></svg>下载</button>
-                        <button class="bseas-btn bseas-btn-primary" id="bseas-copy-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制全部</button>
+                        <button class="bseas-btn bseas-btn-secondary" id="bseas-copy-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制全部</button>
                     </div>
                     <div id="bseas-footer-settings" style="display:none;gap:12px;width:100%;">
                         <button class="bseas-btn bseas-btn-secondary" id="bseas-s-cancel">取消</button>
                         <button class="bseas-btn bseas-btn-primary" id="bseas-s-save">保存设置</button>
                     </div>
                 </div>
-                <div class="bseas-resize-edge left"></div><div class="bseas-resize-edge right"></div><div class="bseas-resize-edge bottom"></div>
+                <div class="bseas-resize-edge left"></div><div class="bseas-resize-edge right"></div><div class="bseas-resize-edge top"></div><div class="bseas-resize-edge bottom"></div><div class="bseas-resize-corner corner-tl"></div><div class="bseas-resize-corner corner-tr"></div><div class="bseas-resize-corner corner-bl"></div><div class="bseas-resize-corner corner-br"></div>
             </div>
         `);
         document.body.appendChild(c);
@@ -2196,34 +2233,83 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             panel.style.width = '';
             panel.style.height = '';
         }
+        updatePanelTriggerClass(panel);
+    }
+    // 依据按钮相对面板的位置，标注水平/垂直象限，用于指示条与角热区的显隐
+    function updatePanelTriggerClass(panel) {
+        if (!panel) return;
+        const manualPos = GM_getValue('bseas_panel_position', null);
+        const preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
+        let hSide, vSide;
+        if (manualPos) {
+            hSide = manualPos.side;
+            vSide = manualPos.top < document.documentElement.clientHeight / 2 ? 'top' : 'bottom';
+        } else {
+            hSide = preset.includes('left') ? 'left' : 'right';
+            vSide = preset.includes('top') ? 'top' : 'bottom';
+        }
+        panel.classList.toggle('trigger-h-left', hSide === 'left');
+        panel.classList.toggle('trigger-h-right', hSide === 'right');
+        panel.classList.toggle('trigger-v-top', vSide === 'top');
+        panel.classList.toggle('trigger-v-bottom', vSide === 'bottom');
+    }
+    // 面板唤出后2秒渐隐指示条
+    function scheduleIndicatorFade(panel) {
+        if (_indicatorFadeTimer) { clearTimeout(_indicatorFadeTimer); _indicatorFadeTimer = null; }
+        if (!panel) return;
+        panel.classList.remove('indicators-faded');
+        _indicatorFadeTimer = setTimeout(() => {
+            panel.classList.add('indicators-faded');
+            _indicatorFadeTimer = null;
+        }, 5000);
+    }
+    function clearIndicatorFade() {
+        if (_indicatorFadeTimer) { clearTimeout(_indicatorFadeTimer); _indicatorFadeTimer = null; }
     }
     function makeResizable(container) {
         const panel = container.querySelector('.bseas-panel');
         if (!panel) return;
         const edges = panel.querySelectorAll('.bseas-resize-edge');
+        const corners = panel.querySelectorAll('.bseas-resize-corner');
         if (!edges.length) return;
         if (_resizeDocHandlers) {
             document.removeEventListener('mousemove', _resizeDocHandlers.move);
             document.removeEventListener('mouseup', _resizeDocHandlers.up);
             window.removeEventListener('blur', _resizeDocHandlers.up);
         }
-        let resizing = false, dir = '', startW = 0, startH = 0, startX = 0, startY = 0, startRectR = 0;
+        let resizing = false, dir = '', startW = 0, startH = 0, startX = 0, startY = 0, curTs = '', curTv = '';
         const getTriggerSide = () => {
             const manualPos = GM_getValue('bseas_panel_position', null);
             const preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
             if (manualPos) return manualPos.side;
             return preset.includes('left') ? 'left' : 'right';
         };
-        const onDown = (e, edge) => {
+        const getTriggerVertical = () => {
+            const manualPos = GM_getValue('bseas_panel_position', null);
+            const preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
+            if (manualPos) return manualPos.top < document.documentElement.clientHeight / 2 ? 'top' : 'bottom';
+            return preset.includes('top') ? 'top' : 'bottom';
+        };
+        const onDown = (e, edge, isCorner) => {
             if (e.button !== 0) return;
             e.preventDefault(); e.stopPropagation();
             resizing = true;
-            dir = edge.classList.contains('left') ? 'left' : (edge.classList.contains('right') ? 'right' : 'bottom');
+            if (isCorner) {
+                dir = 'corner';
+            } else {
+                dir = edge.classList.contains('left') ? 'left'
+                    : edge.classList.contains('right') ? 'right'
+                    : edge.classList.contains('top') ? 'top' : 'bottom';
+            }
             const rect = panel.getBoundingClientRect();
             startW = rect.width; startH = rect.height;
             startX = e.clientX; startY = e.clientY;
-            startRectR = rect.right;
-            panel.classList.add('no-transition');
+            updatePanelTriggerClass(panel);
+            curTs = getTriggerSide();
+            curTv = getTriggerVertical();
+            panel.classList.add('no-transition', 'resizing');
+            if (_indicatorFadeTimer) { clearTimeout(_indicatorFadeTimer); _indicatorFadeTimer = null; }
+            panel.classList.remove('indicators-faded');
             document.body.style.userSelect = 'none';
         };
         const onMove = (e) => {
@@ -2231,29 +2317,20 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             const dx = e.clientX - startX, dy = e.clientY - startY;
             const maxW = Math.min(document.documentElement.clientWidth - 40, 550);
             const maxH = Math.min(document.documentElement.clientHeight - 120, 1100);
-            const triggerSide = getTriggerSide();
-            if (dir === 'right') {
-                const w = Math.max(340, Math.min(maxW, startW + dx));
-                panel.style.width = w + 'px';
-            } else if (dir === 'bottom') {
-                const h = Math.max(320, Math.min(maxH, startH + dy));
-                panel.style.height = h + 'px';
-            } else if (dir === 'left') {
-                const w = Math.max(340, Math.min(maxW, startW - dx));
-                panel.style.width = w + 'px';
+            let newW = startW, newH = startH;
+            if (dir === 'left') newW = startW - dx;
+            else if (dir === 'right') newW = startW + dx;
+            else if (dir === 'top') newH = startH - dy;
+            else if (dir === 'bottom') newH = startH + dy;
+            else if (dir === 'corner') {
+                // 斜拖角：水平按远离按钮边方向、垂直按远离按钮边方向
+                newW = curTs === 'right' ? startW - dx : startW + dx;
+                newH = curTv === 'top' ? startH + dy : startH - dy;
             }
-            if (dir === 'left' || dir === 'right') {
-                const curRect = panel.getBoundingClientRect();
-                if (triggerSide === 'right') {
-                    const shift = curRect.right - startRectR;
-                    if (shift !== 0) {
-                        let curLeft = parseFloat(panel.style.left) || 0;
-                        if (panel.style.left === '' || panel.style.left === 'auto') curLeft = 0;
-                        panel.style.left = (curLeft - shift) + 'px';
-                        panel.style.right = 'auto';
-                    }
-                }
-            }
+            newW = Math.max(340, Math.min(maxW, newW));
+            newH = Math.max(320, Math.min(maxH, newH));
+            panel.style.width = newW + 'px';
+            panel.style.height = newH + 'px';
             const _ft = panel.querySelector('.bseas-footer');
             if (_ft) panel.style.setProperty('--bseas-footer-h', (_ft.offsetHeight + 14) + 'px');
         };
@@ -2261,10 +2338,12 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             if (!resizing) return;
             resizing = false;
             document.body.style.userSelect = '';
-            panel.classList.remove('no-transition');
+            panel.classList.remove('no-transition', 'resizing');
             GM_setValue('bseas_panel_size', { w: panel.offsetWidth, h: panel.offsetHeight, winW: document.documentElement.clientWidth, winH: document.documentElement.clientHeight });
+            if (panel.classList.contains('show')) scheduleIndicatorFade(panel);
         };
-        edges.forEach(edge => edge.addEventListener('mousedown', e => onDown(e, edge)));
+        edges.forEach(edge => edge.addEventListener('mousedown', e => onDown(e, edge, false)));
+        corners.forEach(corner => corner.addEventListener('mousedown', e => onDown(e, corner, true)));
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
         window.addEventListener('blur', onUp);
@@ -2454,6 +2533,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         function closePanelWithAnim() {
             if (!panelVisible) return;
             panel.classList.add('hiding');
+            clearIndicatorFade();
             if (_closeTimer) clearTimeout(_closeTimer);
             _closeTimer = setTimeout(() => {
                 panelVisible = false;
@@ -2469,6 +2549,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 panelVisible = true;
                 panel.classList.remove('hiding');
                 panel.classList.add('show');
+                scheduleIndicatorFade(panel);
                 const _tb = panel.querySelector('.bseas-tab-body');
                 if (_tb) _tb.classList.remove('anim-right', 'anim-left');
                 const _ft = panel.querySelector('.bseas-footer');
@@ -2489,12 +2570,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             sourceCollapsed = !sourceCollapsed;
             c.querySelector('#bseas-source-collapse')?.classList.toggle('open', !sourceCollapsed);
             c.querySelector('#bseas-source-arrow').classList.toggle('collapsed', sourceCollapsed);
+            if (!sourceCollapsed) prefetchAllSubtitleBodies();
         });
         c.querySelectorAll('.bseas-tab').forEach(tab => tab.addEventListener('click', (e) => { e.stopPropagation(); switchTab(tab.dataset.tab); }));
         c.querySelector('#bseas-refresh-btn').addEventListener('click', e => { e.stopPropagation(); if (!isLoading) fetchAllSubtitles(true); });
         c.querySelector('#bseas-settings-btn').addEventListener('click', e => { e.stopPropagation(); switchTab(currentTab === 'settings' ? 'preview' : 'settings'); });
         c.querySelector('#bseas-go-settings')?.addEventListener('click', e => { e.stopPropagation(); switchTab('settings'); });
-        c.querySelector('#bseas-copy-btn').addEventListener('click', () => { const t = getFormattedText(); if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); } });
+        c.querySelector('#bseas-copy-btn').addEventListener('click', () => { const t = getPlainSubtitleText(); if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); } });
         c.querySelector('#bseas-play-btn').addEventListener('click', e => { e.stopPropagation(); togglePlayMode(); });
         c.querySelector('#bseas-download-btn').addEventListener('click', e => { e.stopPropagation(); openDownloadMenu(); });
         c.querySelector('#bseas-follow-btn').addEventListener('click', e => { e.stopPropagation(); toggleFollowMode(); });
@@ -2535,7 +2617,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const updateTsVisibility = () => {
             const checked = overlay.querySelector('input[name="bseas-dl-format"]:checked');
             if (!checked) return;
-            tsRow.style.display = checked.value === 'txt' ? 'flex' : 'none';
+            tsRow.classList.toggle('hidden', checked.value !== 'txt');
         };
         overlay.querySelectorAll('input[name="bseas-dl-format"]').forEach(r => r.addEventListener('change', () => {
             overlay.querySelectorAll('.bseas-dl-option').forEach(o => o.classList.remove('checked'));
@@ -2851,11 +2933,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const btn = document.getElementById('bseas-follow-btn');
         if (!btn) return;
         const shouldShow = panelVisible && currentTab === 'preview' && !!currentSubtitleData?.body?.length;
-        if (!shouldShow) { btn.style.display = 'none'; return; }
-        if (followModeActive) { btn.style.display = 'flex'; return; }
-        const video = document.querySelector('#bilibili-player video') || document.querySelector('video');
-        const videoPlaying = video && !video.paused && !video.ended && video.readyState >= 2;
-        btn.style.display = videoPlaying ? 'flex' : 'none';
+        btn.style.display = shouldShow ? 'flex' : 'none';
     }
     function startFollowCheck() {
         if (followCheckInterval) clearInterval(followCheckInterval);
@@ -3210,9 +3288,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         return html;
     }
-    function filterSubtitles(body) {
+    function filterSubtitles(body, forceMode) {
         if (!subtitleSearchKeyword) return body;
-        if (!expandedSearch) {
+        const useExpanded = forceMode ? forceMode === 'expanded' : expandedSearch;
+        if (!useExpanded) {
             const keywords = subtitleSearchKeyword.split(/\s+/).filter(Boolean).map(kw => toHalfWidth(kw).toLowerCase());
             if (keywords.length === 0) return body;
             let source = body.filter(it => !it.content.includes('\u266a') && !it.content.includes('\u266b'));
@@ -3238,7 +3317,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             footer = '<div class="bseas-empty">未匹配到字幕</div>';
         }
         if (subtitleSearchKeyword && !expandedSearch) {
-            footer += `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-expand-search" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">扩大搜索</span></div>`;
+            const body = currentSubtitleData?.body || [];
+            const expandedResult = filterSubtitles(body, 'expanded');
+            const isDifferent = expandedResult.length !== filtered.length || expandedResult.some((it, i) => it !== filtered[i]);
+            if (isDifferent) footer += `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-expand-search" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">扩大搜索</span></div>`;
         } else if (subtitleSearchKeyword && expandedSearch) {
             footer += `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-restore-search" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">恢复普通搜索</span></div>`;
         }
@@ -3542,8 +3624,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     // ===================== 22. 文本页渲染 =====================
     function renderTextTab(el) {
         if (!currentSubtitleData?.body?.length) { safeSetInnerHTML(el, '<div class="bseas-empty">暂无数据</div>'); return; }
-        safeSetInnerHTML(el, `<div class="bseas-text-controls"><label class="bseas-checkbox-label"><input type="checkbox" id="bseas-ts-toggle" ${textShowTimestamps ? 'checked' : ''}>包含时间戳</label><span id="bseas-ts-hint" style="font-size:12px;color:var(--bseas-text-muted);">格式:[MM:SS.ms]</span></div><textarea class="bseas-text-area" id="bseas-text-out" readonly>${escapeHtml(getFormattedText())}</textarea>`);
+        safeSetInnerHTML(el, `<div class="bseas-text-controls"><label class="bseas-checkbox-label"><input type="checkbox" id="bseas-ts-toggle" ${textShowTimestamps ? 'checked' : ''}>包含时间戳</label><span id="bseas-ts-hint" style="font-size:12px;color:var(--bseas-text-muted);">格式:[MM:SS.ms]</span></div><textarea class="bseas-text-area" id="bseas-text-out" readonly>${escapeHtml(getFormattedText())}</textarea><button class="bseas-btn bseas-btn-primary" id="bseas-text-copy-btn" style="flex:0 0 auto;margin-top:12px;"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制</button>`);
         document.getElementById('bseas-ts-toggle')?.addEventListener('change', e => { textShowTimestamps = e.target.checked; GM_setValue('bseas_text_show_timestamps', textShowTimestamps); document.getElementById('bseas-text-out').value = getFormattedText(); });
+        document.getElementById('bseas-text-copy-btn')?.addEventListener('click', () => { const t = getFormattedText(); if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); } });
     }
 
     // ===================== 23. 设置页渲染 =====================
