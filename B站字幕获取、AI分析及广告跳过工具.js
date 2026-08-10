@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.4.3
+// @version      2.4.4
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,7 +39,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.4.3';
+    const SCRIPT_VERSION = '2.4.4';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -339,7 +339,7 @@
         .bseas-panel.no-transition { transition:none !important; }
         .bseas-resize-edge { position:absolute; z-index:40; pointer-events:auto; }
         .bseas-resize-edge.left { left:0; top:0; width:6px; height:100%; cursor:ew-resize; }
-        .bseas-resize-edge.right { right:0; top:0; width:6px; height:100%; cursor:ew-resize; }
+        .bseas-resize-edge.right { right:0; top:0; width:3px; height:100%; cursor:ew-resize; }
         .bseas-resize-edge.top { left:6px; right:6px; top:0; height:4px; cursor:ns-resize; }
         .bseas-resize-edge.bottom { left:6px; right:6px; bottom:0; height:5px; cursor:ns-resize; }
         .bseas-resize-edge:hover { background:rgba(0,174,236,0.12); }
@@ -497,11 +497,14 @@
         .bseas-play-guide-slider input[type="range"]::-moz-range-track { height:5px; border-radius:3px; background:rgba(0,174,236,0.2); }
         .bseas-play-guide-slider span { font-size:12px; color:var(--bseas-text-muted); min-width:32px; text-align:right; }
         .bseas-play-guide-btns { display:flex; gap:10px; justify-content:center; margin-top:16px; }
-        .bseas-follow-btn { position:absolute; right:16px; bottom:96px; padding:8px 16px; border-radius:var(--bseas-radius-md); background:#fff; color:var(--bseas-text); border:1px solid var(--bseas-border); cursor:pointer; display:none; align-items:center; justify-content:center; gap:6px; z-index:30; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); font-size:13px; font-weight:400; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+        .bseas-follow-btn { position:absolute; right:16px; bottom:96px; padding:8px 18px; border-radius:9999px; background:#fff; color:var(--bseas-text); border:1px solid var(--bseas-border); cursor:pointer; display:none; align-items:center; justify-content:center; gap:6px; z-index:30; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); font-size:13px; font-weight:400; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
         .bseas-follow-btn:hover { transform:translateY(-1px); border-color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.18); }
         .bseas-follow-btn.active { background:var(--bseas-primary); color:#fff; border-color:var(--bseas-primary); animation:bseas-follow-pulse 2s ease-in-out infinite; }
         .bseas-follow-btn svg { width:14px; height:14px; flex-shrink:0; }
         @keyframes bseas-follow-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+        .bseas-back-top-btn { position:absolute; right:16px; bottom:140px; width:36px; height:36px; border-radius:50%; background:#fff; color:var(--bseas-text); border:1px solid var(--bseas-border); cursor:pointer; display:none; align-items:center; justify-content:center; z-index:30; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 2px 8px rgba(0,0,0,0.06); }
+        .bseas-back-top-btn:hover { transform:translateY(-1px); border-color:var(--bseas-primary); color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.18); }
+        .bseas-back-top-btn svg { width:16px; height:16px; flex-shrink:0; }
         .bseas-subtitle-item.current-follow { background:rgba(0,174,236,0.1); border-radius:6px; transition:background 0.3s ease; }
         .bseas-search-clear { position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:var(--bseas-text-muted); display:none; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; }
         .bseas-search-clear:hover { background:rgba(0,0,0,0.08); color:var(--bseas-text); }
@@ -2078,6 +2081,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         currentTab = tab;
         if (followModeActive && tab !== 'preview') stopFollowMode();
         updateFollowBtnVisibility();
+        updateBackTopBtnVisibility();
         const tabsEl = document.querySelector('.bseas-tabs');
         if (tabsEl) tabsEl.classList.toggle('hidden', tab === 'settings');
         document.querySelectorAll('.bseas-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
@@ -2123,6 +2127,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-collapse" id="bseas-source-collapse"><div class="bseas-collapse-inner"><div class="bseas-source-body" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div></div></div>
                 <div class="bseas-tabs"><button class="bseas-tab active" data-tab="preview">浏览</button><button class="bseas-tab" data-tab="ai">AI 分析</button><button class="bseas-tab" data-tab="text">文本</button></div></div><div class="bseas-tab-body"><div class="bseas-empty">正在初始化...</div></div></div>
                 <button class="bseas-follow-btn" id="bseas-follow-btn" title="字幕跟随视频滚动"><svg viewBox="0 0 24 24" fill="none"><path d="M4 8L12 16L20 8" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>跟随视频</span></button>
+                <button class="bseas-back-top-btn" id="bseas-back-top-btn" title="回到顶部"><svg viewBox="0 0 24 24" fill="none"><path d="M12 20V4M5 11l7-7 7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 <div class="bseas-footer">
                     <div id="bseas-footer-normal" style="display:flex;gap:12px;width:100%;">
                         <button class="bseas-btn bseas-btn-secondary" id="bseas-play-btn" disabled><svg viewBox="0 0 1024 1024" width="20" height="20"><path fill="currentColor" d="M882.734114 459.147258l0.024559-0.024559L244.016061 21.12718l-0.199545 0.188288C230.582097 8.748245 212.62819 1.014096 192.840518 1.014096c-40.704051 0-73.699536 32.66905-73.699536 72.996524 0 22.148439-0.954745 65.513086 0 64.572668l0 373.422851 0 393.071354c0 0.325411 0 25.249057 0 44.935422 0 40.302915 32.995485 72.972988 73.699536 72.972988 19.862373 0 37.892005-7.78429 51.125401-20.466124l0.050142 0.025583 638.742613-437.982216-0.024559-0.038886c13.886265-13.270235 22.549575-31.889291 22.549575-52.531424 0-0.050142 0-0.088004 0-0.150426 0-0.050142 0-0.11154 0-0.149403C905.28369 491.048829 896.620379 472.41647 882.734114 459.147258z"/></svg>播放</button>
@@ -2554,6 +2559,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 if (_tb) _tb.classList.remove('anim-right', 'anim-left');
                 const _ft = panel.querySelector('.bseas-footer');
                 if (_ft) panel.style.setProperty('--bseas-footer-h', (_ft.offsetHeight + 14) + 'px');
+                updateBackTopBtnVisibility();
                 if (allSubtitles.length === 0) fetchAllSubtitles();
             }
         });
@@ -2580,6 +2586,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         c.querySelector('#bseas-play-btn').addEventListener('click', e => { e.stopPropagation(); togglePlayMode(); });
         c.querySelector('#bseas-download-btn').addEventListener('click', e => { e.stopPropagation(); openDownloadMenu(); });
         c.querySelector('#bseas-follow-btn').addEventListener('click', e => { e.stopPropagation(); toggleFollowMode(); });
+        c.querySelector('#bseas-back-top-btn').addEventListener('click', e => { e.stopPropagation(); const ct = document.querySelector('.bseas-content'); if (ct) ct.scrollTo({ top:0, behavior:'smooth' }); });
+        bindBackTopScroll();
         c.querySelector('#bseas-s-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); switchTab('preview'); });
         c.querySelector('#bseas-s-save')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2935,9 +2943,24 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const shouldShow = panelVisible && currentTab === 'preview' && !!currentSubtitleData?.body?.length;
         btn.style.display = shouldShow ? 'flex' : 'none';
     }
+    function updateBackTopBtnVisibility() {
+        const btn = document.getElementById('bseas-back-top-btn');
+        if (!btn) return;
+        const content = document.querySelector('.bseas-content');
+        if (!content) { btn.style.display = 'none'; return; }
+        const scrolledDown = content.scrollTop > 200;
+        const shouldShow = panelVisible && currentTab === 'preview' && scrolledDown;
+        btn.style.display = shouldShow ? 'flex' : 'none';
+    }
+    function bindBackTopScroll() {
+        const content = document.querySelector('.bseas-content');
+        if (!content || content._bseasBackTopBound) return;
+        content._bseasBackTopBound = true;
+        content.addEventListener('scroll', updateBackTopBtnVisibility);
+    }
     function startFollowCheck() {
         if (followCheckInterval) clearInterval(followCheckInterval);
-        followCheckInterval = setInterval(updateFollowBtnVisibility, 1000);
+        followCheckInterval = setInterval(() => { updateFollowBtnVisibility(); updateBackTopBtnVisibility(); }, 1000);
     }
 
     // ===================== 18. 文本格式化 =====================
