@@ -1,6 +1,15 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.4.5]
+
+### Added
+- 分集（分P）视频字幕支持直接全集下载
+
+### Changed
+- 启用跟随视频功能后，再点一键回顶部时，自动取消跟随视频
+- 在AI评价功能提示词中允许AI对视频中提示在发生在自己知识库最后一次更新已知范围内，但与自己知识库明显不符的基本事实提出适当疑问
+
 ## [2.4.4]
 
 ### Added
