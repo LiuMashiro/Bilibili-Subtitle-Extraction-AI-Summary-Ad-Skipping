@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - 启用跟随视频功能后，再点一键回顶部时，自动取消跟随视频
 - 在AI评价功能提示词中允许AI对视频中提示在发生在自己知识库最后一次更新已知范围内，但与自己知识库明显不符的基本事实提出适当疑问
+- 提示词中包含分集视频的当前集小标题
 
 ## [2.4.4]
 
