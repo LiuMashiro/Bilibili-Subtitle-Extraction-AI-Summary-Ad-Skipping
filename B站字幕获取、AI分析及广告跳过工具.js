@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.4.4
+// @version      2.4.5
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,7 +39,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.4.4';
+    const SCRIPT_VERSION = '2.4.5';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -151,8 +151,8 @@
         return { head: '## 舆论分析', body: '- 提炼评论区的1-N个主要观点方向（根据情况决定），简明概括每个方向的核心立场，标注每个观点方向的情感倾向（正面/负面/中性/混合）和大约占比。\n- 如有高赞代表性观点，可简要引用（无需标注用户名）\n- 一句话概括评论区整体氛围' };
     }
     function buildAiEvaluationSection(saveTokens) {
-        if (saveTokens) return { head: '## AI评价', body: '客观、理性、一针见血地评价本视频（两句话以内）。默认内容事实属实。' };
-        return { head: '## AI评价', body: '对视频做出客观、理性、简洁、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、可以反对），但言语保持克制。考虑到信息滞后，请默认内容事实属实，不质疑事实真实性。' };
+        if (saveTokens) return { head: '## AI评价', body: '客观、理性、一针见血地评价本视频（两句话以内）。默认内容事实属实；与你知识库已知内容明显不符的基本事实可适当提出疑问。' };
+        return { head: '## AI评价', body: '对视频做出客观、理性、简洁、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、可以反对），但言语保持克制。考虑到信息滞后，请默认内容事实属实；但对于与你知识库最后一次更新已知范围内、与已知内容明显不符的基本事实，可以适当提出疑问并简要说明，其余内容不质疑事实真实性。' };
     }
     function buildAdRulesSection(adHint, saveTokens) {
         if (saveTokens) {
@@ -805,6 +805,9 @@
     let currentVideoKey = null;
     let currentAid = null;
     let hotComments = [];
+    let videoPartsInfo = [];
+    let allPartsSubtitlesCache = null;
+    let isFetchingAllParts = false;
     let aiSummaryCache = {};
     let aiConversationHistory = [];
     let adSegments = [];
@@ -974,6 +977,14 @@
         const url = window.location.href;
         const match = url.match(/[?&]p=(\d+)/);
         return match ? parseInt(match[1], 10) : null;
+    }
+    function isMultiPartVideo() { return videoPartsInfo.length > 1; }
+    function getCurrentPartTitle() {
+        const n = getVideoPartNumber() || 1;
+        const info = videoPartsInfo.find(p => p.page === n);
+        if (info?.part) return info.part;
+        const el = document.querySelector('.video-pod__item.active .title-txt') || document.querySelector('.title-txt');
+        return el ? el.textContent.trim() : '';
     }
     function getCurrentSubtitleLanguage() {
         return currentSubtitleData?.lan_doc || '';
@@ -1286,6 +1297,7 @@
             let cid = vd.data.cid;
             if (pages.length >= page) cid = pages[page - 1].cid;
             currentAid = aid;
+            videoPartsInfo = pages.map((p, i) => ({ page: p.page || i + 1, cid: p.cid, part: p.part || '' }));
             const pr = await fetch(`https://api.bilibili.com/x/player/wbi/v2?aid=${aid}&cid=${cid}`, { credentials: 'include' });
             const pd = await pr.json();
             if (pd.code !== 0 || !pd.data?.subtitle?.subtitles) return [];
@@ -1309,6 +1321,36 @@
             const d = await r.json();
             return d.body || [];
         } catch (e) { return []; }
+    }
+    async function fetchAllPartsSubtitles() {
+        if (!currentAid || videoPartsInfo.length === 0) return [];
+        const bvid = (window.location.href.match(/(BV[\w]+)/) || [])[1];
+        const cacheKey = `${bvid}_${currentSubtitleData?.lan || 'auto'}`;
+        if (allPartsSubtitlesCache && allPartsSubtitlesCache.key === cacheKey) return allPartsSubtitlesCache.data;
+        const aid = currentAid;
+        const parts = videoPartsInfo.slice();
+        const partsFingerprint = parts.map(p => p.cid).join(',');
+        const curLan = currentSubtitleData?.lan;
+        const isZh = s => /^zh/i.test(s.lan) || /[\u4e00-\u9fa5]/.test(s.lan_doc || '');
+        const results = [];
+        for (let i = 0; i < parts.length; i++) {
+            const p = parts[i];
+            showToast(`正在获取全部P字幕（${i + 1}/${parts.length}）：${p.part || 'P' + p.page}`, '', { duration: 60000 });
+            let body = [];
+            try {
+                const pr = await fetch(`https://api.bilibili.com/x/player/wbi/v2?aid=${aid}&cid=${p.cid}`, { credentials: 'include' });
+                const pd = await pr.json();
+                const subs = (pd.code === 0 && pd.data?.subtitle?.subtitles) ? pd.data.subtitle.subtitles : [];
+                let track = curLan ? subs.find(s => s.lan === curLan) : null;
+                if (!track) track = subs.find(isZh) || subs[0] || null;
+                if (track) body = await fetchSubtitleContent(track.subtitle_url);
+            } catch (e) {}
+            results.push({ page: p.page, part: p.part, body });
+        }
+        const snapshotValid = currentAid === aid && videoPartsInfo.map(p => p.cid).join(',') === partsFingerprint;
+        if (!snapshotValid) return null;
+        allPartsSubtitlesCache = { key: cacheKey, data: results };
+        return results;
     }
     async function prefetchAllSubtitleBodies() {
         const targets = allSubtitles.filter(s => s.subtitle_url && !s.body?.length);
@@ -1456,10 +1498,12 @@
         if (videoDesc) contextInfo += `视频简介：「${videoDesc}」\n`;
         if (videoTags.length > 0) contextInfo += `视频标签：${videoTags.join(', ')}\n`;
         const upName = getUpName();
-        const partNum = getVideoPartNumber();
+        const multiPart = isMultiPartVideo();
+        const partNum = getVideoPartNumber() ?? (multiPart ? 1 : null);
+        const partTitle = multiPart ? getCurrentPartTitle() : '';
         const subLang = getCurrentSubtitleLanguage();
         if (upName) contextInfo += `UP主：「${upName}」\n`;
-        if (partNum !== null) contextInfo += `当前分P：第${partNum}P\n`;
+        if (partNum !== null) contextInfo += `当前分P：第${partNum}P${partTitle ? `「${partTitle}」` : ''}\n`;
         if (subLang) contextInfo += `字幕语言：${subLang}\n`;
         if (contextInfo) contextInfo += '\n';
         const commentsText = (bseas_opinion_analysis && hotComments.length > 0) ? formatCommentsForAI() : '';
@@ -1680,6 +1724,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         currentVideoKey = vk;
         allSubtitles = []; currentSubtitleData = null; selectedSubtitleId = null;
+        videoPartsInfo = []; allPartsSubtitlesCache = null;
         adSegments = []; hasJumpedAds = {}; lastAdCheckResult = null; adDetectionNotified = false;
         progressMarkInitialized = false; hotComments = []; subtitleSearchKeyword = ''; currentPreviewLimit = 0; expandedSearch = false;
         aiConversationHistory = [];
@@ -2582,11 +2627,14 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         c.querySelector('#bseas-refresh-btn').addEventListener('click', e => { e.stopPropagation(); if (!isLoading) fetchAllSubtitles(true); });
         c.querySelector('#bseas-settings-btn').addEventListener('click', e => { e.stopPropagation(); switchTab(currentTab === 'settings' ? 'preview' : 'settings'); });
         c.querySelector('#bseas-go-settings')?.addEventListener('click', e => { e.stopPropagation(); switchTab('settings'); });
-        c.querySelector('#bseas-copy-btn').addEventListener('click', () => { const t = getPlainSubtitleText(); if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); } });
+        c.querySelector('#bseas-copy-btn').addEventListener('click', () => {
+            if (isMultiPartVideo()) { openCopyScopeMenu(); return; }
+            const t = getPlainSubtitleText(); if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); }
+        });
         c.querySelector('#bseas-play-btn').addEventListener('click', e => { e.stopPropagation(); togglePlayMode(); });
         c.querySelector('#bseas-download-btn').addEventListener('click', e => { e.stopPropagation(); openDownloadMenu(); });
         c.querySelector('#bseas-follow-btn').addEventListener('click', e => { e.stopPropagation(); toggleFollowMode(); });
-        c.querySelector('#bseas-back-top-btn').addEventListener('click', e => { e.stopPropagation(); const ct = document.querySelector('.bseas-content'); if (ct) ct.scrollTo({ top:0, behavior:'smooth' }); });
+        c.querySelector('#bseas-back-top-btn').addEventListener('click', e => { e.stopPropagation(); if (followModeActive) stopFollowMode(); const ct = document.querySelector('.bseas-content'); if (ct) ct.scrollTo({ top:0, behavior:'smooth' }); });
         bindBackTopScroll();
         c.querySelector('#bseas-s-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); switchTab('preview'); });
         c.querySelector('#bseas-s-save')?.addEventListener('click', (e) => {
@@ -2613,19 +2661,82 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         setTimeout(() => URL.revokeObjectURL(a.href), 1000);
         showToast(`✓ ${format.toUpperCase()}下载成功`, 'success');
     }
+    function openCopyScopeMenu() {
+        if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
+        const existing = document.querySelector('.bseas-edit-overlay.bseas-copy-overlay') || document.querySelector('.bseas-edit-overlay.bseas-dl-overlay');
+        if (existing) return;
+        const overlay = document.createElement('div');
+        overlay.className = 'bseas-edit-overlay bseas-copy-overlay';
+        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal" style="max-width:380px;"><div class="bseas-edit-modal-header"><span>复制字幕</span></div><div class="bseas-edit-modal-body" style="padding:20px;"><div class="bseas-dl-format-group"><label class="bseas-dl-option checked"><input type="radio" name="bseas-copy-scope" value="current" checked><span class="bseas-dl-option-content"><span class="bseas-dl-option-title">当前分集</span><span class="bseas-dl-option-desc">仅复制当前正在观看的分集字幕</span></span></label><label class="bseas-dl-option"><input type="radio" name="bseas-copy-scope" value="all"><span class="bseas-dl-option-content"><span class="bseas-dl-option-title">全部分集</span><span class="bseas-dl-option-desc">包含全部分集字幕</span></span></label></div></div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-copy-confirm">复制</button></div></div>`);
+        document.body.appendChild(overlay);
+        overlay.querySelectorAll('input[name="bseas-copy-scope"]').forEach(r => r.addEventListener('change', () => {
+            overlay.querySelectorAll('.bseas-dl-option').forEach(o => o.classList.remove('checked'));
+            r.closest('.bseas-dl-option').classList.add('checked');
+        }));
+        const closeCopy = () => {
+            const modal = overlay.querySelector('.bseas-edit-modal');
+            if (modal) { modal.classList.add('closing'); overlay.classList.add('closing'); setTimeout(() => overlay.remove(), 200); }
+            else overlay.remove();
+            document.removeEventListener('keydown', escHandler);
+        };
+        overlay.querySelector('.bseas-edit-modal-btn.cancel').addEventListener('click', closeCopy);
+        overlay.querySelector('#bseas-copy-confirm').addEventListener('click', async () => {
+            const checked = overlay.querySelector('input[name="bseas-copy-scope"]:checked');
+            const scope = checked ? checked.value : 'current';
+            closeCopy();
+            if (scope === 'all') { copyAllPartsText(); return; }
+            const t = getPlainSubtitleText();
+            if (t) { GM_setClipboard(t); showToast('✓ 已复制', 'success'); }
+        });
+        overlay.addEventListener('click', e => { if (e.target === overlay) closeCopy(); });
+        const escHandler = e => { if (e.key === 'Escape') closeCopy(); };
+        document.addEventListener('keydown', escHandler);
+    }
+    async function copyAllPartsText() {
+        if (isFetchingAllParts) { showToast('正在获取全部P字幕，请稍候', 'warning'); return; }
+        isFetchingAllParts = true;
+        try {
+            const results = await fetchAllPartsSubtitles();
+            if (!results) { showToast('视频已切换，本次获取已中断', 'warning'); return; }
+            const text = buildAllPartsText(results, false);
+            const validCount = results.filter(r => r.body?.length).length;
+            if (text.trim()) { GM_setClipboard(text); showToast(`✓ 已复制全部${validCount}P字幕`, 'success'); }
+            else showToast('未获取到字幕内容', 'warning');
+        } finally { isFetchingAllParts = false; }
+    }
+    async function downloadAllPartsSubtitle() {
+        if (isFetchingAllParts) { showToast('正在获取全部P字幕，请稍候', 'warning'); return; }
+        isFetchingAllParts = true;
+        try {
+            const results = await fetchAllPartsSubtitles();
+            if (!results) { showToast('视频已切换，本次获取已中断', 'warning'); return; }
+            const text = buildAllPartsText(results, downloadShowTimestamps);
+            if (!text.trim()) { showToast('未获取到字幕内容', 'warning'); return; }
+            const title = sanitizeFilename(getVideoTitle());
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+            a.download = `${title}_全部P.txt`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+            showToast('✓ 全部P TXT下载成功', 'success');
+        } finally { isFetchingAllParts = false; }
+    }
     function openDownloadMenu() {
         if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
-        const existing = document.querySelector('.bseas-edit-overlay.bseas-dl-overlay');
+        const existing = document.querySelector('.bseas-edit-overlay.bseas-dl-overlay') || document.querySelector('.bseas-edit-overlay.bseas-copy-overlay');
         if (existing) return;
         const overlay = document.createElement('div');
         overlay.className = 'bseas-edit-overlay bseas-dl-overlay';
-        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal" style="max-width:380px;"><div class="bseas-edit-modal-header"><span>下载字幕</span></div><div class="bseas-edit-modal-body" style="padding:20px;"><div class="bseas-dl-format-group"><label class="bseas-dl-option checked"><input type="radio" name="bseas-dl-format" value="txt" checked><span class="bseas-dl-option-content"><span class="bseas-dl-option-title">TXT 纯文本</span><span class="bseas-dl-option-desc">纯文字内容，便于阅读和复制</span></span></label><label class="bseas-dl-option"><input type="radio" name="bseas-dl-format" value="srt"><span class="bseas-dl-option-content"><span class="bseas-dl-option-title">SRT 字幕文件</span><span class="bseas-dl-option-desc">带时间轴，适合视频播放器加载</span></span></label></div><div class="bseas-dl-ts-row" id="bseas-dl-ts-row"><label class="bseas-dl-ts-label"><input type="checkbox" id="bseas-dl-ts" ${downloadShowTimestamps ? 'checked' : ''}><span>包含时间戳</span></label></div></div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-dl-confirm">下载</button></div></div>`);
+        const allPRow = isMultiPartVideo() ? `<div class="bseas-dl-ts-row" id="bseas-dl-allp-row"><label class="bseas-dl-ts-label"><input type="checkbox" id="bseas-dl-allp"><span>包含所有分集</span></label></div>` : '';
+        safeSetInnerHTML(overlay, `<div class="bseas-edit-modal" style="max-width:380px;"><div class="bseas-edit-modal-header"><span>下载字幕</span></div><div class="bseas-edit-modal-body" style="padding:20px;"><div class="bseas-dl-format-group"><label class="bseas-dl-option checked"><input type="radio" name="bseas-dl-format" value="txt" checked><span class="bseas-dl-option-content"><span class="bseas-dl-option-title">TXT 纯文本</span><span class="bseas-dl-option-desc">纯文字内容，便于阅读和复制</span></span></label><label class="bseas-dl-option"><input type="radio" name="bseas-dl-format" value="srt"><span class="bseas-dl-option-content"><span class="bseas-dl-option-title">SRT 字幕文件</span><span class="bseas-dl-option-desc">带时间轴，适合视频播放器加载</span></span></label></div>${allPRow}<div class="bseas-dl-ts-row" id="bseas-dl-ts-row"><label class="bseas-dl-ts-label"><input type="checkbox" id="bseas-dl-ts" ${downloadShowTimestamps ? 'checked' : ''}><span>包含时间戳</span></label></div></div><div class="bseas-edit-modal-footer"><button class="bseas-edit-modal-btn cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-dl-confirm">下载</button></div></div>`);
         document.body.appendChild(overlay);
         const tsRow = overlay.querySelector('#bseas-dl-ts-row');
+        const allPRowEl = overlay.querySelector('#bseas-dl-allp-row');
         const updateTsVisibility = () => {
             const checked = overlay.querySelector('input[name="bseas-dl-format"]:checked');
             if (!checked) return;
-            tsRow.classList.toggle('hidden', checked.value !== 'txt');
+            tsRow.classList.toggle('hidden', checked.value === 'srt');
+            if (allPRowEl) allPRowEl.classList.toggle('hidden', checked.value !== 'txt');
         };
         overlay.querySelectorAll('input[name="bseas-dl-format"]').forEach(r => r.addEventListener('change', () => {
             overlay.querySelectorAll('.bseas-dl-option').forEach(o => o.classList.remove('checked'));
@@ -2647,7 +2758,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         overlay.querySelector('#bseas-dl-confirm').addEventListener('click', () => {
             const checked = overlay.querySelector('input[name="bseas-dl-format"]:checked');
             const fmt = checked ? checked.value : 'txt';
+            const allPChecked = !!overlay.querySelector('#bseas-dl-allp')?.checked;
             closeDl();
+            if (fmt === 'txt' && allPChecked) { downloadAllPartsSubtitle(); return; }
             downloadSubtitle(fmt);
         });
         overlay.addEventListener('click', e => { if (e.target === overlay) closeDl(); });
@@ -2983,6 +3096,14 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     function getPlainSubtitleText() {
         if (!currentSubtitleData?.body) return '';
         return currentSubtitleData.body.map(it => it.content).join('\n');
+    }
+    function buildAllPartsText(results, withTimestamps) {
+        return results.map(r => {
+            const body = r.body || [];
+            const lines = body.length ? body.map(it => withTimestamps ? `[${formatTimeWithMs(it.from)} - ${formatTimeWithMs(it.to)}] ${it.content}` : it.content).join('\n') : '（本P无字幕）';
+            const header = r.part ? `【P${r.page} ${r.part}】` : `【P${r.page}】`;
+            return `${header}\n${lines}`;
+        }).join('\n\n\n');
     }
     function subtitleContainsAdKeyword() {
         if (!currentSubtitleData?.body) return false;
