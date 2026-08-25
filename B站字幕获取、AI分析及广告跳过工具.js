@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.4.5
+// @version      2.4.6
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,7 +39,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.4.5';
+    const SCRIPT_VERSION = '2.4.6';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -152,7 +152,7 @@
     }
     function buildAiEvaluationSection(saveTokens) {
         if (saveTokens) return { head: '## AI评价', body: '客观、理性、一针见血地评价本视频（两句话以内）。默认内容事实属实；与你知识库已知内容明显不符的基本事实可适当提出疑问。' };
-        return { head: '## AI评价', body: '对视频做出客观、理性、简洁、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、可以反对），但言语保持克制。考虑到信息滞后，请默认内容事实属实；但对于与你知识库最后一次更新已知范围内、与已知内容明显不符的基本事实，可以适当提出疑问并简要说明，其余内容不质疑事实真实性。' };
+        return { head: '## AI评价', body: '对视频（也可以包括评论区）做出客观、理性、简洁、冷静、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、中立或反对），但言语保持克制，避免言辞激烈。对于有争议的视频，避免情绪被煽动过激、陷入乌合之众、走向非黑即白的极端、阴谋论。考虑到信息滞后，通常默认视频内容事实基本属实，但不一定完整（可能片面、一面之词）；但对于与你知识库最后一次更新已知范围内、与已知内容明显不符的基本事实，或事件包含错误内容/明显非常荒谬、违背常识/专业基本知识/普遍真理，缺乏真实性，缺乏时间地点人物，可以适当提出质疑并说明，其余内容一般不质疑事实真实性。可以超脱视频内容本身至视频被制作及采用的叙事、用辞等的商业和深层目的等。评论区内容不一定属实，且可能存在个性化推送的信息茧房。默认事件属实不一定必须顺着视频认可其分析、评价等结论，可以有你自己的想法，但三观要正，在社会主流、积极正向进步和现实现状之间寻求平衡。不过也不能过度分析臆测，对单纯的视频不能强行无病呻吟、过度解读。不一定要批评，没有什么争议和问题且高质量的优秀视频该肯定时给予足够肯定。注意合规。' };
     }
     function buildAdRulesSection(adHint, saveTokens) {
         if (saveTokens) {
@@ -208,7 +208,7 @@
         const opinion = opinionAnalysis ? buildOpinionSection(false) : null;
         const aiEval = aiEvaluation ? buildAiEvaluationSection(false) : null;
 
-        let p = `${formatRules}请根据以下字幕内容生成一份【${d.summaryWord}】的视频总结。\n\n注意事项：\n- 不要提及广告植入、商业推广等内容，只聚焦核心内容。广告关键词包括（但不限于）：${AD_KEYWORD_LIST.join('、')}。\n- 字幕含时间戳[MM:SS.ms]，总结中请剔除时间戳只保留文字。字幕为智能识别，可能包含错误。\n\n输出结构（确保第一行为"## 视频总结"，最多使用"###"三级标题）：\n\n## 视频总结\n\n### 核心主题\n${d.overviewWord}概括视频核心主题和整体概述。\n\n### 核心结论与关键信息\n${d.listWord}。\n\n示例：\n## 视频总结\n\n### 核心主题\n示例内容。\n\n### 核心结论与关键信息\n- **示例内容**：\n  - 示例内容。`;
+        let p = `${formatRules}请根据以下字幕内容生成一份【${d.summaryWord}】的视频总结。\n\n注意事项：\n- 不要提及广告植入、商业推广等内容，只聚焦核心内容。对可能的语音识别错误，采用正确的写法。广告关键词包括（但不限于）：${AD_KEYWORD_LIST.join('、')}。\n- 字幕含时间戳[MM:SS.ms]，总结中请剔除时间戳只保留文字。字幕为智能识别，可能包含错误。\n\n输出结构（确保第一行为"## 视频总结"，最多使用"###"三级标题）：\n\n## 视频总结\n\n### 核心主题\n${d.overviewWord}概括视频核心主题和整体概述。\n\n### 核心结论与关键信息\n${d.listWord}。\n\n示例：\n## 视频总结\n\n### 核心主题\n示例内容。\n\n### 核心结论与关键信息\n- **示例内容**：\n  - 示例内容。`;
 
         if (opinion) {
             p += `\n\n---\n\n若提供热门评论数据，在"核心结论与关键信息"之后输出舆论分析：\n${opinion.head}\n${opinion.body}\n若无评论数据，则跳过，不输出"---"和"## 舆论分析"。`;
@@ -1502,7 +1502,7 @@
         const partNum = getVideoPartNumber() ?? (multiPart ? 1 : null);
         const partTitle = multiPart ? getCurrentPartTitle() : '';
         const subLang = getCurrentSubtitleLanguage();
-        if (upName) contextInfo += `UP主：「${upName}」\n`;
+        if (upName) contextInfo += `UP主（UP主不一定是出镜人，可能是转载）：「${upName}」\n`;
         if (partNum !== null) contextInfo += `当前分P：第${partNum}P${partTitle ? `「${partTitle}」` : ''}\n`;
         if (subLang) contextInfo += `字幕语言：${subLang}\n`;
         if (contextInfo) contextInfo += '\n';
@@ -3600,6 +3600,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 if (!hasSubtitle) html += '<div class="bseas-empty" style="padding:40px 20px;">未获取到字幕，点击复制提示词进行舆情分析</div>';
             } else {
                 html += `<button class="bseas-ai-big-btn" id="bseas-generate-btn" ${!bseas_api_key || isGeneratingAI ? 'disabled' : ''}><svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 8L12 16L20 8" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg> ${isGeneratingAI ? '生成中...' : 'AI分析'}</button>`;
+                if (bseas_confirm_enabled && getTimestampedTextForAI().length > bseas_confirm_chars) {
+                    html += `<div style="text-align:center;font-size:14px;color:var(--bseas-text-dim);margin-top:-6px;margin-bottom:14px;">字幕文字量过多，可<span id="bseas-huge-copy-prompt" style="cursor:pointer;text-decoration:underline;color:var(--bseas-primary);">点此复制提示词</span></div>`;
+                }
                 html += '<div style="text-align:center;font-size:12px;color:var(--bseas-text-muted);margin-bottom:16px;margin-top:-8px;">AI生成内容可能有误，请核查</div>';
                 if (!hasSubtitle) html += '<div class="bseas-empty" style="padding:40px 20px;">未获取到字幕，点击进行舆情分析</div>';
                 if (!bseas_api_key) {
@@ -3640,6 +3643,12 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (aiResultEl) renderMarkdownInto(aiResultEl, stripAdLine(cachedSummary || ''));
         el.querySelectorAll('.bseas-qa-md').forEach((qaEl, i) => { if (cachedQA[i]) renderMarkdownInto(qaEl, cachedQA[i].a); });
         document.getElementById('bseas-copy-prompt-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const fullPrompt = buildFullPrompt(getTimestampedTextForAI(), false);
+            GM_setClipboard(fullPrompt);
+            showToast('✓ 提示词已复制，请粘贴给AI工具', 'success');
+        });
+        document.getElementById('bseas-huge-copy-prompt')?.addEventListener('click', (e) => {
             e.stopPropagation();
             const fullPrompt = buildFullPrompt(getTimestampedTextForAI(), false);
             GM_setClipboard(fullPrompt);
