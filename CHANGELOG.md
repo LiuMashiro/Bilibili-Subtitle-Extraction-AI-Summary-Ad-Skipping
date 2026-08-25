@@ -1,6 +1,14 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.4.6]
+
+### Added
+- 字幕文字量多时，直接在AI分析按钮下提供“字幕文字量过多，可点此复制提示词”的快捷复制键
+
+### Changed
+- 优化了提示文本
+
 ## [2.4.5]
 
 ### Added
