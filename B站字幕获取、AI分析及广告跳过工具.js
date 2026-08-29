@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.4.6
+// @version      2.4.7
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,7 +39,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.4.6';
+    const SCRIPT_VERSION = '2.4.7';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -50,9 +50,9 @@
     const AUTO_FETCH_DELAY_MS = 1500;
 
     const API_PLATFORMS = {
-        deepseek: { name: 'DeepSeek (性价比高)', url: 'https://api.deepseek.com/v1/chat/completions', models: ['deepseek-v4-flash', 'deepseek-v4-pro', '自定义'], link: 'https://platform.deepseek.com/' },
-        zlm: { name: '智谱 (提供免费模型)', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', models: ['GLM-4.7-Flash (免费)', 'GLM-5.2', 'GLM-5.1', 'GLM-5', 'GLM-5-Turbo', 'GLM-4.7', 'GLM-4.7-FlashX', 'GLM-4.6', 'GLM-4.5-Air', 'GLM-4.5-AirX', 'GLM-4-Long', 'GLM-4-FlashX-250414', 'GLM-4-Flash-250414', '自定义'], link: 'https://bigmodel.cn/' },
-        doubao: { name: '火山方舟 (豆包)', url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', models: ['doubao-seed-2-0-lite-260428', 'doubao-seed-2-0-mini-260428', 'doubao-seed-2-0-pro-260215', '自定义'], link: 'https://www.volcengine.com/product/ark' },
+        deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1/chat/completions', models: ['deepseek-v4-flash', 'deepseek-v4-pro', '自定义'], link: 'https://platform.deepseek.com/' },
+        zlm: { name: '智谱 (提供免费模型)', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', models: ['GLM-4.7-Flash (免费)', 'GLM-5.3', 'GLM-5.2', 'GLM-5.1', 'GLM-5', 'GLM-5-Turbo', 'GLM-4.7', 'GLM-4.7-FlashX', 'GLM-4.6', 'GLM-4.5-Air', 'GLM-4.5-AirX', 'GLM-4-Long', 'GLM-4-FlashX-250414', 'GLM-4-Flash-250414', '自定义'], link: 'https://bigmodel.cn/' },
+        doubao: { name: '火山方舟', url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', models: ['doubao-seed-evolving', 'doubao-seed-2-1-pro-260628', 'doubao-seed-2-1-turbo-260628', 'doubao-seed-2-0-lite-260428', 'doubao-seed-2-0-mini-260428', 'doubao-seed-2-0-pro-260215', 'doubao-seed-2-0-lite-260215', 'doubao-seed-2-0-mini-260215', 'doubao-seed-2-0-code-preview-260215', 'doubao-seed-character-260628', 'glm-5-2-260617', 'deepseek-v4-pro-ga-260813', 'deepseek-v4-flash-ga-260731', 'deepseek-v4-pro-260425', 'deepseek-v4-flash-260425', 'doubao-seed-character-251128', 'doubao-seed-translation-250915', '自定义'], link: 'https://www.volcengine.com/product/ark' },
         chatgpt: { name: 'ChatGPT', url: 'https://api.openai.com/v1/chat/completions', models: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4-pro', '自定义'], link: 'https://platform.openai.com/' },
         claude: { name: 'Claude', url: 'https://api.anthropic.com/v1/messages', models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-fable-5', 'claude-mythos-5', 'claude-haiku-4-5-20251001', '自定义'], link: 'https://console.anthropic.com/' },
         gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent', models: ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro', '自定义'], link: 'https://aistudio.google.com/' },
@@ -152,27 +152,28 @@
     }
     function buildAiEvaluationSection(saveTokens) {
         if (saveTokens) return { head: '## AI评价', body: '客观、理性、一针见血地评价本视频（两句话以内）。默认内容事实属实；与你知识库已知内容明显不符的基本事实可适当提出疑问。' };
-        return { head: '## AI评价', body: '对视频（也可以包括评论区）做出客观、理性、简洁、冷静、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、中立或反对），但言语保持克制，避免言辞激烈。对于有争议的视频，避免情绪被煽动过激、陷入乌合之众、走向非黑即白的极端、阴谋论。考虑到信息滞后，通常默认视频内容事实基本属实，但不一定完整（可能片面、一面之词）；但对于与你知识库最后一次更新已知范围内、与已知内容明显不符的基本事实，或事件包含错误内容/明显非常荒谬、违背常识/专业基本知识/普遍真理，缺乏真实性，缺乏时间地点人物，可以适当提出质疑并说明，其余内容一般不质疑事实真实性。可以超脱视频内容本身至视频被制作及采用的叙事、用辞等的商业和深层目的等。评论区内容不一定属实，且可能存在个性化推送的信息茧房。默认事件属实不一定必须顺着视频认可其分析、评价等结论，可以有你自己的想法，但三观要正，在社会主流、积极正向进步和现实现状之间寻求平衡。不过也不能过度分析臆测，对单纯的视频不能强行无病呻吟、过度解读。不一定要批评，没有什么争议和问题且高质量的优秀视频该肯定时给予足够肯定。注意合规。' };
+        return { head: '## AI评价', body: '对视频（也可以包括评论区）做出客观、理性、简洁、冷静、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、中立或反对），但言语保持克制，避免言辞激烈。对于有争议的视频，避免情绪被煽动过激、陷入乌合之众、走向非黑即白的极端、阴谋论。考虑到信息滞后，通常默认视频内容事实基本属实，但不一定完整（可能片面、一面之词）；但对于与你知识库最后一次更新已知范围内、与已知内容明显不符的基本事实，或事件包含错误内容/明显非常荒谬、违背常识/专业基本知识/普遍真理，缺乏真实性，缺乏时间地点人物，可以适当提出质疑并说明，其余内容一般不质疑事实真实性。可以超脱视频内容本身至视频被制作及采用的叙事、用辞等的商业和深层目的等。评论区内容不一定属实，且可能存在个性化推送的信息茧房。默认事件属实不一定必须顺着视频认可其分析、评价等结论，常见逻辑谬误有诉诸人身,稻草人谬误,诉诸情感,滑坡谬误,虚假两难,循环论证,诉诸权威,从众谬误,事后归因,混淆相关性与因果,转移话题,赌徒谬误,诉诸无知,光环谬误,双重标准,基因谬误,以偏概全,非黑即白（极端化）等，可以有你自己的想法，但三观要正，在社会主流、积极正向进步和现实现状之间寻求平衡。不过也不能过度分析臆测，对单纯的视频不能强行无病呻吟、过度解读。不一定要批评，没有什么争议和问题且高质量的优秀视频该肯定时给予足够肯定。注意合规。' };
     }
     function buildAdRulesSection(adHint, saveTokens) {
         if (saveTokens) {
-            if (adHint) return '字幕含时间戳[MM:SS - MM:SS]。识别中间插入的最长一段广告，末尾输出一行：广告时间[MM:SS - MM:SS]（无广告则输出 广告时间[无]）。';
-            return '末尾严格输出一行：广告时间[无]';
+            if (adHint) return '字幕含时间戳[MM:SS - MM:SS]。识别中间插入的最长一段广告，末尾输出一行：[AD]广告时间[MM:SS - MM:SS]（无广告则输出 [AD]广告时间[无]）。';
+            return '末尾严格输出一行：[AD]广告时间[无]';
         }
         const hint = adHint ? '【重要！本视频很可能含有广告，请注意按要求输出广告时间！】\n' : '';
         return `${hint}识别中间插入的广告。在全文末尾列出"广告时间"部分，支持以下两种格式：
-格式A（同一行）：广告时间[MM:SS - MM:SS]
+格式A（同一行）：[AD]广告时间[MM:SS - MM:SS]
 格式B（分行）：
-### 广告时间
+### [AD]广告时间
 [MM:SS - MM:SS]
 
 规则：
-- 如果视频中没有广告，请严格回复：广告时间[无]
+- 如果视频中没有广告，请严格回复：[AD]广告时间[无]
 - 如果有多段中间插入的广告，取最长的一段。
 - <5s的广告时间，或者整个视频都是广告，则忽略不计。
 - 只包含分钟和秒，禁止任何其他多余文字、符号或标点。
 - "-"左右包含空格。
-- 超长视频允许分钟数值大于60，如[70:00 - 75:00]。禁止小时位。禁止分秒毫秒位。`;
+- 超长视频允许分钟数值大于60，如[70:00 - 75:00]。禁止小时位。禁止分秒毫秒位。
+- 总结、舆论分析、AI评价等非广告时间的正文中严禁出现"广告时间"字样（引用评论原文时也须改述或省略），该字样仅允许出现在末尾的广告输出行。`;
     }
 
     function getAISummaryPrompt(hasSubtitle, includeFormatRules = true, adHint = false) {
@@ -506,6 +507,10 @@
         .bseas-back-top-btn:hover { transform:translateY(-1px); border-color:var(--bseas-primary); color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.18); }
         .bseas-back-top-btn svg { width:16px; height:16px; flex-shrink:0; }
         .bseas-subtitle-item.current-follow { background:rgba(0,174,236,0.1); border-radius:6px; transition:background 0.3s ease; }
+        .bseas-jump-btn { position:absolute; top:50%; right:10px; transform:translateY(-50%); width:26px; height:26px; border:none; border-radius:8px; background:#f1f5f9; color:var(--bseas-text-dim); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.2s, color 0.2s; z-index:2; }
+        .bseas-jump-btn:hover { background:var(--bseas-primary); color:#ffffff; }
+        .bseas-jump-btn svg { width:14px; height:14px; fill:currentColor; }
+        .bseas-subtitle-item.jump-flash { background:rgba(0,174,236,0.12); border-color:var(--bseas-primary); }
         .bseas-search-clear { position:absolute; right:10px; top:50%; transform:translateY(-50%); cursor:pointer; color:var(--bseas-text-muted); display:none; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; }
         .bseas-search-clear:hover { background:rgba(0,0,0,0.08); color:var(--bseas-text); }
         .bseas-search-icon { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:var(--bseas-text-muted); pointer-events:none; display:flex; }
@@ -866,8 +871,14 @@
         if (!entry) return;
         const summary = typeof entry === 'string' ? entry : entry.summary;
         if (!summary) return;
-        const idx = summary.lastIndexOf('广告时间');
-        const newSummary = idx !== -1 ? (summary.slice(0, idx) + '广告时间[无]（已取消）') : (summary.trimEnd() + '\n\n广告时间[无]（已取消）');
+        let base = cutAdFromSummary(summary).before;
+        if (extractAdSegments(base).type === 'has_ad') {
+            base = base
+                .replace(/\[AD\][ \t]*广告时间[\s\S]{0,80}?\[\d+:\d{2}\s*[-–—~至]\s*\d+:\d{2}\]/g, '')
+                .replace(/广告时间[\s\S]{0,80}?\[\d+:\d{2}\s*[-–—~至]\s*\d+:\d{2}\]/g, '')
+                .trimEnd();
+        }
+        const newSummary = base ? (base + '\n\n[AD]广告时间[无]（已取消）') : '[AD]广告时间[无]（已取消）';
         if (typeof entry === 'string') {
             aiSummaryCache[videoKey] = newSummary;
         } else {
@@ -1230,30 +1241,52 @@
     }
 
     // ===================== 13. 广告解析与跳过 =====================
+    // 广告输出行识别：优先 [AD] 前缀标记，兼容无前缀旧格式；行首严格匹配（剥离列表/引用前缀），避免正文引用"广告时间"造成误伤
+    function findAdLineInfos(summary) {
+        const lines = summary.split('\n');
+        const infos = [];
+        for (let i = 0; i < lines.length; i++) {
+            const t = lines[i].replace(/^\s*(?:>|[-+*]\s*|\d+[.)]\s*)+/g, '').replace(/[#\s*`]/g, '');
+            let m = t.match(/^\[AD\]广告时间\[\s*(?:无|\d+:\d{2}\s*[-–—~至]\s*\d+:\d{2})[^\]]*\]/);
+            if (m) { infos.push({ index: i, ad: true, rest: t.slice(m[0].length) }); continue; }
+            m = t.match(/^广告时间\[\s*(?:无|\d+:\d{2}\s*[-–—~至]\s*\d+:\d{2})[^\]]*\]/);
+            if (m) { infos.push({ index: i, ad: false, rest: t.slice(m[0].length) }); continue; }
+            if (t === '[AD]广告时间' || t === '广告时间') infos.push({ index: i, ad: t.startsWith('[AD]'), rest: '' });
+        }
+        return infos;
+    }
+    function cutAdFromSummary(summary) {
+        const infos = findAdLineInfos(summary).filter(x => x.rest.length <= 20);
+        const adOnes = infos.filter(x => x.ad);
+        const target = adOnes.length ? adOnes[adOnes.length - 1] : (infos.length ? infos[infos.length - 1] : null);
+        if (!target) return { found: false, before: summary.trim() };
+        const lines = summary.split('\n');
+        let cut = target.index;
+        while (cut > 0 && lines[cut - 1].trim() === '') cut--;
+        return { found: true, before: lines.slice(0, cut).join('\n').trim() };
+    }
     function extractAdSegments(rawSummary) {
         const text = rawSummary.replace(/\*/g, '').replace(/`/g, '').replace(/#/g, ' ');
-        const timeRe = /广告时间[\s\S]{0,80}?\[(\d+:\d{2})\s*[-–—~至]\s*(\d+:\d{2})\]/g;
-        const timeMatches = [...text.matchAll(timeRe)];
+        const mkTimeRe = pre => new RegExp(pre + '广告时间[\\s\\S]{0,80}?\\[(\\d+:\\d{2})\\s*[-–—~至]\\s*(\\d+:\\d{2})\\]', 'g');
+        const mkNoRe = pre => new RegExp(pre + '广告时间[\\s\\S]{0,80}?\\[\\s*无[^\\]]*\\]', 'g');
+        const matchAll = re => [...text.matchAll(re)];
+        // 判定顺序：[AD]时间段 > [AD]无 > 无前缀时间段 > 无前缀无（避免正文引用的时间格式覆盖 [AD]无 的结论）
+        let timeMatches = matchAll(mkTimeRe('\\[AD\\][ \\t]*'));
+        if (timeMatches.length === 0) {
+            const adNoMatches = matchAll(mkNoRe('\\[AD\\][ \\t]*'));
+            if (adNoMatches.length > 0) return { type: 'none', segments: [] };
+            timeMatches = matchAll(mkTimeRe(''));
+        }
         if (timeMatches.length > 0) {
             const last = timeMatches[timeMatches.length - 1];
             const start = parseAdTime(last[1]), end = parseAdTime(last[2]);
             if (start !== null && end !== null && end > start) return { type: 'has_ad', segments: [{ start, end, startStr: last[1], endStr: last[2] }] };
         }
-        const noRe = /广告时间[\s\S]{0,80}?\[\s*无[^\]]*\]/g;
-        if ([...text.matchAll(noRe)].length > 0) return { type: 'none', segments: [] };
+        if (matchAll(mkNoRe('')).length > 0) return { type: 'none', segments: [] };
         return { type: 'error', segments: [] };
     }
     function stripAdLine(summary) {
-        const lines = summary.split('\n');
-        let cutIndex = lines.length;
-        for (let i = 0; i < lines.length; i++) {
-            if (lines[i].replace(/[#\s*`]/g, '').includes('广告时间')) {
-                cutIndex = i;
-                while (cutIndex > 0 && /^[#\s]/.test(lines[cutIndex - 1]) && lines[cutIndex - 1].trim() === '') cutIndex--;
-                break;
-            }
-        }
-        return lines.slice(0, cutIndex).join('\n').trim();
+        return cutAdFromSummary(summary).before;
     }
     function notifyAdDetected() {
         if (adDetectionNotified || !adSegments || adSegments.length === 0) return;
@@ -1692,7 +1725,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (adCheck.type === 'error') {
             safeSetInnerHTML(streamEl, markdownToHtml(summary) + '<div style="margin-top:14px;color:#f59e0b;font-size:13px;display:flex;align-items:center;gap:6px;"><div class="bseas-spinner" style="width:14px;height:14px;border-width:2px;"></div>格式校验修正中...</div>');
             messages.push({ role: 'assistant', content: summary });
-            messages.push({ role: 'user', content: '你没有正确输出广告时间。请输出一行：有广告输出"广告时间[MM:SS - MM:SS]"，没广告输出"广告时间[无]"。只输出这一行，不含其他任何内容。必须在同一行。' });
+            messages.push({ role: 'user', content: '你没有正确输出广告时间。请输出一行：有广告输出"[AD]广告时间[MM:SS - MM:SS]"，没广告输出"[AD]广告时间[无]"。只输出这一行，不含其他任何内容。必须在同一行。' });
             try {
                 const fix = await callAPINoStream(messages);
                 summary = summary + '\n' + fix.trim();
@@ -2636,6 +2669,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         c.querySelector('#bseas-follow-btn').addEventListener('click', e => { e.stopPropagation(); toggleFollowMode(); });
         c.querySelector('#bseas-back-top-btn').addEventListener('click', e => { e.stopPropagation(); if (followModeActive) stopFollowMode(); const ct = document.querySelector('.bseas-content'); if (ct) ct.scrollTo({ top:0, behavior:'smooth' }); });
         bindBackTopScroll();
+        bindFollowExitScroll();
         c.querySelector('#bseas-s-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); switchTab('preview'); });
         c.querySelector('#bseas-s-save')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2985,6 +3019,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     let followCheckInterval = null;
     let followVideoRef = null;
     let followLastIdx = -1;
+    let followScrollLockUntil = 0;
     function toggleFollowMode() {
         if (followModeActive) { stopFollowMode(); return; }
         const video = document.querySelector('#bilibili-player video') || document.querySelector('video');
@@ -2997,6 +3032,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         followModeActive = true;
         followVideoRef = video;
         followLastIdx = -1;
+        // 跟随需按全量字幕定位，搜索过滤会导致错行，开启时自动退出搜索
+        if (subtitleSearchKeyword) { clearSubtitleSearchUI(); updatePreviewList(); }
         const btn = document.getElementById('bseas-follow-btn');
         if (btn) btn.classList.add('active');
         followTimeupdateHandler = () => scrollFollowToCurrent(video);
@@ -3035,6 +3072,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         target.classList.add('current-follow');
         const targetTop = target.offsetTop;
         const targetH = target.clientHeight;
+        followScrollLockUntil = Date.now() + 900;
         content.scrollTo({
             top: targetTop - content.clientHeight / 2 + targetH / 2,
             behavior: 'smooth'
@@ -3070,6 +3108,24 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (!content || content._bseasBackTopBound) return;
         content._bseasBackTopBound = true;
         content.addEventListener('scroll', updateBackTopBtnVisibility);
+    }
+    // 跟随模式下用户手动翻页/滚动时自动退出跟随：优先用输入事件判定，滚动事件仅作滚动条拖动的兜底
+    function bindFollowExitScroll() {
+        const content = document.querySelector('.bseas-content');
+        if (!content || content._bseasFollowExitBound) return;
+        content._bseasFollowExitBound = true;
+        const exitIfFollowing = () => {
+            // 手动翻页/滚动时静默退出跟随
+            if (followModeActive) stopFollowMode();
+        };
+        content.addEventListener('wheel', exitIfFollowing, { passive: true });
+        content.addEventListener('touchmove', exitIfFollowing, { passive: true });
+        content.addEventListener('keydown', (e) => {
+            if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key) || (e.key === ' ' && !e.repeat)) exitIfFollowing();
+        });
+        content.addEventListener('scroll', () => {
+            if (followModeActive && Date.now() > followScrollLockUntil) exitIfFollowing();
+        }, { passive: true });
     }
     function startFollowCheck() {
         if (followCheckInterval) clearInterval(followCheckInterval);
@@ -3453,7 +3509,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     function buildSubtitleListHtml(filtered) {
         const limit = currentPreviewLimit > 0 ? currentPreviewLimit : bseas_max_preview_subtitles;
-        const listHtml = filtered.slice(0, limit).map(it => `<div class="bseas-subtitle-item" data-time="${escapeHtml(it.from)}"><div class="bseas-ts">${highlightTime(it, subtitleSearchKeyword)}</div><div class="bseas-st">${highlightKeyword(it.content, subtitleSearchKeyword)}</div></div>`).join('');
+        const jumpBtnHtml = it => subtitleSearchKeyword
+            ? `<button class="bseas-jump-btn" data-time="${escapeHtml(it.from)}" title="取消搜索并跳转到此处"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></button>`
+            : '';
+        const listHtml = filtered.slice(0, limit).map(it => `<div class="bseas-subtitle-item" data-time="${escapeHtml(it.from)}">${jumpBtnHtml(it)}<div class="bseas-ts">${highlightTime(it, subtitleSearchKeyword)}</div><div class="bseas-st">${highlightKeyword(it.content, subtitleSearchKeyword)}</div></div>`).join('');
         let footer = '';
         if (filtered.length > limit) {
             footer = `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-load-more" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">继续加载</span></div>`;
@@ -3472,6 +3531,39 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     function bindSubtitleItemClicks(container) {
         container.querySelectorAll('.bseas-subtitle-item').forEach(item => item.addEventListener('click', (e) => { e.stopPropagation(); seekToTime(parseFloat(item.dataset.time)); }));
+        container.querySelectorAll('.bseas-jump-btn').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); jumpToSubtitleFromSearch(parseFloat(btn.dataset.time)); }));
+    }
+    // 清空字幕搜索并同步搜索框相关 UI
+    function clearSubtitleSearchUI() {
+        subtitleSearchKeyword = '';
+        expandedSearch = false;
+        currentPreviewLimit = 0;
+        const content = document.querySelector('.bseas-content');
+        const searchInput = content?.querySelector('#bseas-subtitle-search');
+        if (searchInput) searchInput.value = '';
+        const countEl = content?.querySelector('.bseas-search-count');
+        if (countEl) countEl.textContent = '';
+        const clearBtn = content?.querySelector('#bseas-search-clear');
+        if (clearBtn) clearBtn.style.display = 'none';
+    }
+    // 搜索结果跳转：取消搜索展示全部字幕，并滚动定位到目标字幕
+    function jumpToSubtitleFromSearch(t) {
+        if (isNaN(t)) return;
+        const body = currentSubtitleData?.body || [];
+        const idx = body.findIndex(it => it.from === t);
+        if (idx === -1) return;
+        clearSubtitleSearchUI();
+        if (idx >= bseas_max_preview_subtitles) currentPreviewLimit = Math.ceil((idx + 1) / bseas_max_preview_subtitles) * bseas_max_preview_subtitles;
+        updatePreviewList();
+        requestAnimationFrame(() => {
+            const contentEl = document.querySelector('.bseas-content');
+            if (!contentEl) return;
+            const target = contentEl.querySelectorAll('.bseas-subtitle-item')[idx];
+            if (!target) return;
+            target.classList.add('jump-flash');
+            setTimeout(() => target.classList.remove('jump-flash'), 2500);
+            contentEl.scrollTo({ top: target.offsetTop - contentEl.clientHeight / 2 + target.clientHeight / 2, behavior: 'smooth' });
+        });
     }
     function bindLoadMoreClick(container) {
         container.querySelector('#bseas-load-more')?.addEventListener('click', () => {
@@ -3538,6 +3630,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 subtitleSearchKeyword = e.target.value.trim();
                 currentPreviewLimit = 0;
                 expandedSearch = false;
+                if (followModeActive) stopFollowMode();
                 updatePreviewList();
             });
             searchInput.addEventListener('input', (e) => {
@@ -3547,6 +3640,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     subtitleSearchKeyword = e.target.value.trim();
                     currentPreviewLimit = 0;
                     expandedSearch = false;
+                    if (followModeActive) stopFollowMode();
                     updatePreviewList();
                 }, 200);
             });
