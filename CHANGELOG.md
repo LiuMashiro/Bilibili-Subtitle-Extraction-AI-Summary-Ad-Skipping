@@ -1,6 +1,17 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.4.7]
+### Added
+- 搜索字幕后提供跳转键，跳转到对应字幕位置
+- 跟随视频时，上下翻页，自动退出跟随
+
+### Changed
+- 内置模型列表更新
+
+### Fixed
+- 修复了如果AI在正文中输出了广告时间，会被解析系统误判而切断后续内容显示的问题，提高了广告时间识别的稳定性（添加行首匹配、残留长度阈值、置信度和优先级、提示词强调字眼）
+
 ## [2.4.6]
 
 ### Added
