@@ -82,7 +82,7 @@ All notable changes to this project will be documented in this file.
 - 当弹窗出现半透明蒙版时，触发按钮图标以外检测到底色偏深故而变色的问题
 
 
-## [2.4.0]
+## [2.4.0] - 功能拓展更新
 
 ### Added
 - **播放字幕功能**：修改字幕后，直接在视频底部播放字幕，与B站字幕功能类似、可跟随视频播放，支持双语字幕，支持调整样式
@@ -98,7 +98,7 @@ All notable changes to this project will be documented in this file.
 - 面板悬浮在Toast上面
 
 
-## [2.3.0]
+## [2.3.0] - 设置页更新
 
 ### Added
 - 通过浏览页点击字幕跳转到指定时间后，可以点击toast中的撤销字样以撤回原时间，防止误触
@@ -119,7 +119,7 @@ All notable changes to this project will be documented in this file.
 - 编辑字幕页点击取消或保存后把主面板窗口一并关闭的问题
 - 生成AI分析时，切换标签页将导致流式输出失效（降级为普通输出）的问题
 
-## [2.2.2]
+## [2.2.2] - 字幕搜索更新
 
 ### Added
 - 增加扩大字幕搜索功能。在字幕搜索结果的末尾开启一次。启用后，将支持局部匹配、时间匹配（搜索指定时间的字幕）、汉字/阿拉伯数字匹配、同音/拼音匹配等，将会大幅扩大匹配范围，便于筛选字幕
@@ -201,7 +201,7 @@ All notable changes to this project will be documented in this file.
 ### Removed
 - AI 分析页开启"查看原始文本"时不再显示"重新AI分析"按钮
 
-## [2.0.0]
+## [2.0.0] - 视觉更新
 
 ### Changed
 - **大规模视觉更新，包括为触发按钮和部分UI界面添加了高斯模糊效果，复选框视觉优化等**
