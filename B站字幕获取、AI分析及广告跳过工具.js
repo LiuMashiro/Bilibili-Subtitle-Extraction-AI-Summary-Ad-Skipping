@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.4.7
+// @version      2.5.0
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,12 +39,12 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.4.7';
+    const SCRIPT_VERSION = '2.5.0';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
     const CHANGELOG_RAW_URL = 'https://raw.githubusercontent.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/main/CHANGELOG.md';
-    const AD_KEYWORD_LIST = ['转转', '追觅', '神奇小鹿', '妙界', '拼多多', '加速器', '得物', '萌牙家', '夏凉被', '小冰被', '欧莱雅', '海蓝之谜', '洗发水', '防脱发产品', '洗面奶', '扫地机器人', '蓝盒子', '黑白调', '西昊', '按摩仪', '笑容加', '牙刷', '618', '双十一', '云鲸', '徕芬', 'UWANT 友望', '慕思', '珀莱雅', '鱼油'];
+    const AD_KEYWORD_LIST = ['转转', '追觅', '神奇小鹿', '妙界', '拼多多', '加速器', '得物', '萌牙家', '夏凉被', '小冰被', '欧莱雅', '海蓝之谜', '洗发水', '防脱发产品', '洗面奶', '扫地机器人', '蓝盒子', '黑白调', '西昊', '按摩仪', '笑容加', '牙刷', '618', '双十一', '云鲸', '徕芬', 'UWANT 友望', '慕思', '珀莱雅', '鱼油', '爱回收'];
     const AD_MARK_COLOR = 'rgba(255, 193, 7, 0.6)';
     const AD_CHECK_INTERVAL_MS = 2000;
     const AUTO_FETCH_DELAY_MS = 1500;
@@ -87,8 +87,8 @@
                 if (GM_getValue(newK, undefined) === undefined) GM_setValue(newK, GM_getValue(k));
             }
         }
+        if (GM_getValue('bseas_save_tokens', undefined) !== undefined) GM_deleteValue('bseas_save_tokens');
     }
-    migrateOldSettings();
 
     let bseas_platform = GM_getValue('bseas_platform', 'deepseek');
     let bseas_api_key = GM_getValue('bseas_api_key_' + bseas_platform, '');
@@ -101,7 +101,6 @@
     let bseas_opinion_comments_count = GM_getValue('bseas_opinion_comments_count', 30);
     let bseas_detail_level = GM_getValue('bseas_detail_level', 'concise');
     let bseas_auto_skip_ad = GM_getValue('bseas_auto_skip_ad', true);
-    const bseas_latex = true;
     let bseas_disable_api = GM_getValue('bseas_disable_api', false);
     let bseas_panel_pos_preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
     let bseas_max_preview_subtitles = GM_getValue('bseas_max_preview_subtitles', 600);
@@ -109,118 +108,210 @@
     let bseas_confirm_chars = GM_getValue('bseas_confirm_chars', 20000);
     let bseas_confirm_enabled = GM_getValue('bseas_confirm_enabled', true);
     let bseas_ai_evaluation = GM_getValue('bseas_ai_evaluation', false);
-    let bseas_save_tokens = GM_getValue('bseas_save_tokens', false);
+    // 评论条数少于该阈值时视为无参考价值，不参与舆论分析
+    const MIN_OPINION_COMMENTS = 10;
     let bseas_update_mode = GM_getValue('bseas_update_mode', 'reduced');
     let bseas_update_last_prompt_ts = GM_getValue('bseas_update_last_prompt_ts', 0);
 
     // ===================== 3. AI 提示词 =====================
     function getFormatRules() {
-        const latexLine = bseas_latex ? '- LaTeX 行内公式：$公式$\n- LaTeX 块级公式：$$公式$$' : '';
-        const latexBan = bseas_latex ? '' : '- 任何 LaTeX 公式（禁止使用 $ 符号包裹公式，数学概念请用文字或代码描述）';
-        return `允许使用的 Markdown 格式（仅限以下几种）：
-- 标题：#、##、###（最多三级，禁止四级及以上）
-- 粗体：**文字**
-- 斜体：*文字*
-- 无序列表：- 或 *
-- 有序列表：1. 2. 3.
-- 引用：>
-- 分割线：---
+        return `允许（且鼓励）使用的 Markdown 格式：
+
+- 标题：\`#\`、\`##\`、\`###\`（最多三级，禁止四级及以上）
+- 粗体：\`**文字**\`
+- 斜体：\`*文字*\`
+- 无序列表：\`-\` 或 \`*\`（支持二级嵌套：子项另起一行、缩进两个空格并带 \`-\` 标记）
+- 有序列表：\`1.\` \`2.\` \`3.\`（支持二级嵌套：子项另起一行、缩进两个空格并带序号标记）
+- 引用：\`>\`
+- 分割线：\`---\`
 - 行内代码：\`代码\`
- ${latexLine}
+- LaTeX 行内公式：\`$公式$\`
+- LaTeX 块级公式：\`$$公式$$\`
 
 禁止使用的格式：
-- 任何 HTML 标签（如 <div>、<script>、<span> 等）
-- 表格（| ... |）
-- 图片（![]()）
-- 超链接（[]()）
+
+- 任何 HTML 标签（如 \`<div>\`、\`<script>\`、\`<span>\` 等）
+- 表格（\`| ... |\`）
+- 图片（\`![]()\`）
+- 超链接（\`[]()\`）
 - 四级及以上标题
- ${latexBan}`;
+- 其他更特殊的 HTML / Markdown 语法`;
     }
 
     function buildDetailWords(level) {
         switch (level) {
             case 'very_detailed': return { summaryWord: '非常详细', overviewWord: '全面', listWord: '详细地分点列出核心结论、关键信息和具体细节（包含论述过程和支撑论据）' };
             case 'detailed': return { summaryWord: '详细', overviewWord: '详细', listWord: '详细地分点列出核心结论和关键信息' };
-            case 'minimal': return { summaryWord: '极简', overviewWord: '极简', listWord: '极简地分点列出核心要点（剔除一切修饰性废话）' };
-            default: return { summaryWord: '简洁', overviewWord: '简明', listWord: '精简地分点列出核心结论和关键信息（剔除修饰性废话）' };
+            case 'minimal': return { summaryWord: '极简', overviewWord: '极简', listWord: '极简地分点列出核心要点' };
+            default: return { summaryWord: '简洁', overviewWord: '简明', listWord: '精简地分点列出核心结论和关键信息' };
         }
     }
-    function buildBgmNote() { return '标注音符♪符号的是背景音乐/主人物唱歌。'; }
-    function buildOpinionSection(saveTokens) {
-        if (saveTokens) return { head: '## 舆论分析', body: '极简提炼热门评论整体观点和氛围，无评论跳过' };
-        return { head: '## 舆论分析', body: '- 提炼评论区的1-N个主要观点方向（根据情况决定），简明概括每个方向的核心立场，标注每个观点方向的情感倾向（正面/负面/中性/混合）和大约占比。\n- 如有高赞代表性观点，可简要引用（无需标注用户名）\n- 一句话概括评论区整体氛围' };
+
+    function buildBasicInfoSection() {
+        const today = new Date();
+        const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+        const lines = [`今天是 ${today.getFullYear()} 年 ${today.getMonth() + 1} 月 ${today.getDate()} 日 星期${weekdays[today.getDay()]}。`];
+        const title = getVideoTitle();
+        if (title) lines.push(`视频标题：「${title}」`);
+        const desc = getVideoDescription();
+        if (desc) lines.push(`视频简介：「${desc}」`);
+        const tags = getVideoTags();
+        if (tags.length > 0) lines.push(`视频标签：${tags.join(', ')}`);
+        const upName = getUpName();
+        if (upName) lines.push(`UP主（UP主不一定是出镜人，可能是转载）：「${upName}」`);
+        const multiPart = isMultiPartVideo();
+        const partNum = getVideoPartNumber() ?? (multiPart ? 1 : null);
+        const partTitle = multiPart ? getCurrentPartTitle() : '';
+        const subLang = getCurrentSubtitleLanguage();
+        if (partNum !== null) lines.push(`当前分P：第${partNum}P${partTitle ? `「${partTitle}」` : ''}`);
+        if (subLang) lines.push(`字幕语言：${subLang}`);
+        return lines.join('\n');
     }
-    function buildAiEvaluationSection(saveTokens) {
-        if (saveTokens) return { head: '## AI评价', body: '客观、理性、一针见血地评价本视频（两句话以内）。默认内容事实属实；与你知识库已知内容明显不符的基本事实可适当提出疑问。' };
-        return { head: '## AI评价', body: '对视频（也可以包括评论区）做出客观、理性、简洁、冷静、透过现象看本质、深度且一针见血的评价。自行决定对本视频、本评论区的立场（可以支持、中立或反对），但言语保持克制，避免言辞激烈。对于有争议的视频，避免情绪被煽动过激、陷入乌合之众、走向非黑即白的极端、阴谋论。考虑到信息滞后，通常默认视频内容事实基本属实，但不一定完整（可能片面、一面之词）；但对于与你知识库最后一次更新已知范围内、与已知内容明显不符的基本事实，或事件包含错误内容/明显非常荒谬、违背常识/专业基本知识/普遍真理，缺乏真实性，缺乏时间地点人物，可以适当提出质疑并说明，其余内容一般不质疑事实真实性。可以超脱视频内容本身至视频被制作及采用的叙事、用辞等的商业和深层目的等。评论区内容不一定属实，且可能存在个性化推送的信息茧房。默认事件属实不一定必须顺着视频认可其分析、评价等结论，常见逻辑谬误有诉诸人身,稻草人谬误,诉诸情感,滑坡谬误,虚假两难,循环论证,诉诸权威,从众谬误,事后归因,混淆相关性与因果,转移话题,赌徒谬误,诉诸无知,光环谬误,双重标准,基因谬误,以偏概全,非黑即白（极端化）等，可以有你自己的想法，但三观要正，在社会主流、积极正向进步和现实现状之间寻求平衡。不过也不能过度分析臆测，对单纯的视频不能强行无病呻吟、过度解读。不一定要批评，没有什么争议和问题且高质量的优秀视频该肯定时给予足够肯定。注意合规。' };
+
+    function buildSummarySection() {
+        const d = buildDetailWords(bseas_detail_level);
+        return `## 视频总结
+
+*根据以下字幕内容生成一份【${d.summaryWord}】的视频总结。*
+
+### 整体概述
+
+${d.overviewWord}概括视频核心主题。
+
+### 关键信息
+
+- **${d.listWord}**：
+- 剔除修饰性废话
+- 层级克制：本板块最多两级列表，避免大量同级无序列表堆积；并列要点能合并的合并，能归入同一上位条的作为其子项；
+- 同一上位条下需要补充说明时，再使用缩进的二级列表（在上级条目下另起一行、缩进两个空格，并带上 \`-\` 或序号标记），不要平铺成大量同级条目，也不要用纯缩进文本充当子项。`;
     }
-    function buildAdRulesSection(adHint, saveTokens) {
-        if (saveTokens) {
-            if (adHint) return '字幕含时间戳[MM:SS - MM:SS]。识别中间插入的最长一段广告，末尾输出一行：[AD]广告时间[MM:SS - MM:SS]（无广告则输出 [AD]广告时间[无]）。';
-            return '末尾严格输出一行：[AD]广告时间[无]';
+
+    function buildSubtitleNotes() {
+        return `*注：*
+
+*总结中不要提及广告植入、商业推广等内容，只聚焦核心内容。*
+
+*字幕为智能识别，可能包含错误。对可能的语音识别错误，采用正确的写法。*
+
+*字幕含时间戳 \`[MM:SS.ms]\`，总结中请剔除时间戳，只保留文字。*
+
+*标注音符 \`♪\` 符号的是背景音乐/主人物唱歌。*`;
+    }
+
+    function buildOpinionSection() {
+        return `## 舆论分析
+
+### 整体概述
+
+一句话概括评论区整体氛围。
+
+### 方向
+
+- 提炼评论区的一个或多个主要观点方向（根据情况决定），简明概括每个方向的核心立场，标注每个观点方向的情感倾向（正面/负面/中性）和大约占比。
+- 如有高赞代表性观点，可简要引用（无需标注用户名）。
+- 在舆论分析板块仅客观描述舆论方向，不对舆论做评价。
+- 示例：**概述** *（正面·20%）* 认为视频做得非常好。`;
+    }
+
+    const OPINION_CHART_KEYS = ['positive', 'neutral', 'negative'];
+    const OPINION_CHART_LABELS = { positive: '正面', neutral: '中性', negative: '负面' };
+    function buildOpinionChartSection() {
+        return `### 舆论图
+
+*将舆论总结为 正面 中性 负面 三个方向，估算其百分比，严格按照以下格式输出，后期会将其转为一个饼形图直观展示给用户。注意，三个方向的总和必须是 100。*
+
+[positive]:20
+[neutral]:50
+[negative]:30
+
+*注：舆论分析中，占比不仅仅根据评论数量，也要考虑评论赞数。*`;
+    }
+
+    function buildAiEvaluationSection() {
+        return `## AI评价
+
+对视频（也可以包括评论区）做出评价。自行决定对本视频、本评论区的立场（可以支持、中立或反对）。
+
+要求：
+
+- 客观、理性、简洁、冷静、透过现象看本质、深度且一针见血。
+- 克制：言语保持克制，避免言辞激烈。
+- 理性：评论区内容不一定属实，且可能存在个性化推送的信息茧房。对于有争议的视频，避免情绪被煽动过激、陷入乌合之众、走向非黑即白的极端、阴谋论。默认事件属实，但不一定必须顺着视频认可其分析、评价等结论。
+- 甄别：考虑到信息滞后，通常默认视频内容事实基本属实，但不一定完整（可能片面、一面之词）；但对于与你知识库最后一次更新已知范围内、与已知内容明显不符的基本事实，或事件包含错误内容、明显非常荒谬、违背常识、专业基本知识、普遍真理，缺乏真实性，缺乏时间地点人物，可以适当提出质疑并说明，其余内容一般不质疑事实真实性。
+- 深度：对于思想类视频，也可以超脱视频内容本身，至视频被制作及采用的叙事、用辞等的商业和深层目的等。
+- 价值观：可以有你自己的想法，但三观要正，在社会主流、积极正向进步和现实现状之间寻求平衡。
+- 充分肯定：不能过度分析臆测，对单纯的视频不能强行无病呻吟、过度解读。不一定要批评，没有什么争议和问题且高质量的优秀视频，该肯定时给予足够肯定。
+- 注意合规。`;
+    }
+
+    function buildAdSection(hasSubtitle, adHint) {
+        if (!hasSubtitle) {
+            return `本视频无字幕数据，无法定位广告。请在全文末尾严格输出一行：\`[AD]广告时间[无]\``;
         }
-        const hint = adHint ? '【重要！本视频很可能含有广告，请注意按要求输出广告时间！】\n' : '';
-        return `${hint}识别中间插入的广告。在全文末尾列出"广告时间"部分，支持以下两种格式：
-格式A（同一行）：[AD]广告时间[MM:SS - MM:SS]
-格式B（分行）：
-### [AD]广告时间
-[MM:SS - MM:SS]
+        const hint = adHint ? '【重要！本视频很可能含有广告，请注意按要求输出广告时间！】\n\n' : '';
+        return `${hint}识别中间插入的广告。广告关键词包括（但不限于）：${AD_KEYWORD_LIST.join('、')}。在全文末尾列出“广告时间”部分，支持以下两种格式：
+
+- 格式 A（同一行）：\`[AD]广告时间[MM:SS - MM:SS]\`
+- 格式 B（分行）：
+  \`### [AD]广告时间\`
+  \`[MM:SS - MM:SS]\`
 
 规则：
-- 如果视频中没有广告，请严格回复：[AD]广告时间[无]
+
+- 如果视频中没有广告，请严格输出：\`[AD]广告时间[无]\`
 - 如果有多段中间插入的广告，取最长的一段。
-- <5s的广告时间，或者整个视频都是广告，则忽略不计。
-- 只包含分钟和秒，禁止任何其他多余文字、符号或标点。
-- "-"左右包含空格。
-- 超长视频允许分钟数值大于60，如[70:00 - 75:00]。禁止小时位。禁止分秒毫秒位。
-- 总结、舆论分析、AI评价等非广告时间的正文中严禁出现"广告时间"字样（引用评论原文时也须改述或省略），该字样仅允许出现在末尾的广告输出行。`;
+- 小于 5 秒的广告时间，或者整个视频都是广告，则忽略不计。
+- 时间范围只包含分钟和秒，禁止任何其他多余文字、符号或标点。
+- \`-\` 左右包含空格。
+- 超长视频允许分钟数值大于 60，如 \`[70:00 - 75:00]\`。禁止小时位。禁止分秒毫秒位。
+- 总结、舆论分析、AI评价等非广告时间的正文中严禁出现“广告时间”字样（引用评论原文时也须改述或省略），该字样仅允许出现在末尾的广告输出行。`;
     }
 
-    function getAISummaryPrompt(hasSubtitle, includeFormatRules = true, adHint = false) {
-        const saveTokens = bseas_save_tokens;
-        const aiEvaluation = bseas_ai_evaluation;
-        const opinionAnalysis = bseas_opinion_analysis;
+    function buildContentSection(o) {
+        const plates = [];
+        if (o.hasSubtitle) plates.push('视频总结');
+        if (o.opinionEnabled && o.hasComments) plates.push('舆论分析');
+        if (o.aiEvalEnabled) plates.push('AI评价');
+        const firstLine = o.hasSubtitle ? '## 视频总结' : ((o.opinionEnabled && o.hasComments) ? '## 舆论分析' : (o.aiEvalEnabled ? '## AI评价' : ''));
+        let head = `使用与字幕源语言相同的语言输出。
 
-        if (saveTokens) {
-            const parts = [];
-            if (hasSubtitle) {
-                parts.push('## 视频总结\n从字幕极简总结视频核心内容，剔除一切修饰废话。');
-            } else {
-                parts.push('根据视频标题、简介、热门评论（如有）极简进行舆论分析，剔除一切修饰废话。');
-            }
-            if (opinionAnalysis) { const op = buildOpinionSection(true); parts.push(op.head + '\n' + op.body); }
-            if (aiEvaluation) { const ev = buildAiEvaluationSection(true); parts.push(ev.head + '\n' + ev.body); }
-            parts.push(buildAdRulesSection(adHint, true));
-            return parts.join('\n\n');
+主要板块：${plates.length ? plates.join('、') : '（无，仅需输出广告时间行）'}。
+
+不同板块中使用 --- 分割线。
+`;
+        if (firstLine) head += `\n确保最终输出第一行为 \`${firstLine}\`，最多使用 \`###\` 三级标题。按以下结构输出：\n`;
+        const blocks = [];
+        if (o.hasSubtitle) {
+            blocks.push(`${buildSummarySection()}\n\n===== 视频字幕 =====\n${o.subtitleText}\n\n${buildSubtitleNotes()}`);
+        } else if (o.opinionEnabled && o.hasComments) {
+            head += '\n（当前视频未提供字幕数据，请根据视频标题、简介及热门评论直接进行分析，不做内容总结。）\n';
+        } else {
+            head += '\n（当前视频未提供字幕数据，且评论数据不足，请根据视频标题与简介进行分析，不做内容总结。）\n';
         }
-
-        const formatRules = includeFormatRules ? getFormatRules() + '\n\n' : '';
-
-        if (!hasSubtitle) {
-            const opinion = buildOpinionSection(false);
-            const aiEval = aiEvaluation ? buildAiEvaluationSection(false) : null;
-            let p = `${formatRules}当前视频未提供字幕数据。请根据视频标题、简介及热门评论（如有）直接进行舆论分析，不做内容总结。\n若无评论数据，则仅分析标题与简介的倾向。\n\n请直接输出：\n${opinion.head}\n${opinion.body}`;
-            if (aiEval) p += `\n\n---\n${aiEval.head}\n${aiEval.body}`;
-            p += `\n\n${buildBgmNote()}\n\n${buildAdRulesSection(adHint, false)}`;
-            return p;
+        if (o.opinionEnabled && o.hasComments) {
+            let op = `${buildOpinionSection()}\n\n${buildOpinionChartSection()}`;
+            if (o.commentsText) op += `\n\n===== 热门评论（按赞数从高到低排序）=====\n${o.commentsText}`;
+            blocks.push(op);
         }
-
-        const d = buildDetailWords(bseas_detail_level);
-        const opinion = opinionAnalysis ? buildOpinionSection(false) : null;
-        const aiEval = aiEvaluation ? buildAiEvaluationSection(false) : null;
-
-        let p = `${formatRules}请根据以下字幕内容生成一份【${d.summaryWord}】的视频总结。\n\n注意事项：\n- 不要提及广告植入、商业推广等内容，只聚焦核心内容。对可能的语音识别错误，采用正确的写法。广告关键词包括（但不限于）：${AD_KEYWORD_LIST.join('、')}。\n- 字幕含时间戳[MM:SS.ms]，总结中请剔除时间戳只保留文字。字幕为智能识别，可能包含错误。\n\n输出结构（确保第一行为"## 视频总结"，最多使用"###"三级标题）：\n\n## 视频总结\n\n### 核心主题\n${d.overviewWord}概括视频核心主题和整体概述。\n\n### 核心结论与关键信息\n${d.listWord}。\n\n示例：\n## 视频总结\n\n### 核心主题\n示例内容。\n\n### 核心结论与关键信息\n- **示例内容**：\n  - 示例内容。`;
-
-        if (opinion) {
-            p += `\n\n---\n\n若提供热门评论数据，在"核心结论与关键信息"之后输出舆论分析：\n${opinion.head}\n${opinion.body}\n若无评论数据，则跳过，不输出"---"和"## 舆论分析"。`;
-        }
-        if (aiEval) {
-            p += `\n\n---\n\n${aiEval.head}\n${aiEval.body}`;
-        }
-        p += `\n\n${buildBgmNote()}\n\n${buildAdRulesSection(adHint, false)}`;
-        return p;
+        if (o.aiEvalEnabled) blocks.push(buildAiEvaluationSection());
+        return head + '\n' + blocks.join('\n\n---\n\n');
     }
 
+    function getAISummaryPrompt(opts, legacyIncludeFormatRules, legacyAdHint) {
+        if (typeof opts === 'boolean' || opts === undefined) {
+            opts = { hasSubtitle: !!opts, includeFormatRules: legacyIncludeFormatRules, adHint: legacyAdHint };
+        }
+        opts = opts || {};
+        const hasSubtitle = !!opts.hasSubtitle;
+        const CN_NUM = ['一', '二', '三', '四', '五'];
+        let sectionNo = 0;
+        const parts = ['你是一个哔哩哔哩辅助工具的 AI 分析模块，正在分析 B 站视频字幕内容。'];
+        if (opts.includeFormatRules !== false) parts.push(`# ${CN_NUM[sectionNo++]}、Markdown 格式限制\n\n${getFormatRules()}`);
+        parts.push(`# ${CN_NUM[sectionNo++]}、基本信息\n\n${buildBasicInfoSection()}`);
+        parts.push(`# ${CN_NUM[sectionNo++]}、内容处理与输出\n\n${buildContentSection(opts)}`);
+        parts.push(`# ${CN_NUM[sectionNo++]}、广告时间\n\n${buildAdSection(hasSubtitle, !!opts.adHint)}`);
+        return parts.join('\n\n');
+    }
     // ===================== 4. 安全策略 =====================
     let trustedPolicy = null;
     if (window.trustedTypes && window.trustedTypes.createPolicy) {
@@ -241,7 +332,7 @@
         try { const css = GM_getResourceText('KATEX_CSS'); if (css) { GM_addStyle(css); katexCSSInjected = true; } } catch (e) {}
     }
     function renderLatex(el) {
-        if (!bseas_latex || !el) return;
+        if (!el) return;
         if (typeof window.renderMathInElement !== 'function') return;
         injectKatexCSS();
         try {
@@ -481,12 +572,12 @@
         .bseas-play-ctrl button { background:none; border:none; color:#fff; cursor:pointer; padding:4px; display:flex; align-items:center; border-radius:50%; transition:background 0.2s; }
         .bseas-play-ctrl button:hover { background:rgba(255,255,255,0.15); }
         .bseas-play-ctrl button svg { width:18px; height:18px; fill:currentColor; }
-        .bseas-play-guide { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:white; border-radius:14px; padding:24px 28px; z-index:100030; box-shadow:0 8px 40px rgba(0,0,0,0.25); max-width:420px; width:90%; animation:bseas-play-guide-in 0.24s var(--ease-spring); }
-        @keyframes bseas-play-guide-in { from{opacity:0; transform:translate(-50%,calc(-50% - 60px)) scale(0.96)} to{opacity:1; transform:translate(-50%,-50%) scale(1)} }
+        .bseas-play-guide { position:relative; background:white; border-radius:14px; padding:24px 28px; z-index:100030; box-shadow:0 8px 40px rgba(0,0,0,0.25); max-width:420px; width:90%; animation:bseas-play-guide-in 0.24s var(--ease-spring); }
+        @keyframes bseas-play-guide-in { from{opacity:0; transform:translateY(-40px) scale(0.96)} to{opacity:1; transform:translateY(0) scale(1)} }
         .bseas-play-guide.closing { animation:bseas-play-guide-out 0.2s var(--ease-out) forwards; }
-        @keyframes bseas-play-guide-out { from{opacity:1; transform:translate(-50%,-50%) scale(1)} to{opacity:0; transform:translate(-50%,calc(-50% - 60px)) scale(0.96)} }
+        @keyframes bseas-play-guide-out { from{opacity:1; transform:translateY(0) scale(1)} to{opacity:0; transform:translateY(-40px) scale(0.96)} }
         .bseas-play-guide-title { font-size:17px; font-weight:700; color:var(--bseas-text); margin-bottom:6px; text-align:center; }
-        .bseas-play-guide-desc { font-size:12px; color:var(--bseas-text-muted); line-height:1.5; margin-bottom:16px; text-align:center; }
+        .bseas-play-guide-desc { font-size:12px; color:var(--bseas-text-muted); line-height:1.5; margin-bottom:16px; text-align:center; min-height:36px; }
         .bseas-play-guide-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:10px; }
         .bseas-play-guide-label { font-size:13px; font-weight:600; color:var(--bseas-text); flex-shrink:0; }
         .bseas-play-guide select { border:1px solid var(--bseas-border); border-radius:6px; padding:5px 8px; font-size:13px; color:var(--bseas-text); background:#fff; outline:none; cursor:pointer; min-width:120px; }
@@ -498,15 +589,25 @@
         .bseas-play-guide-slider input[type="range"]::-moz-range-track { height:5px; border-radius:3px; background:rgba(0,174,236,0.2); }
         .bseas-play-guide-slider span { font-size:12px; color:var(--bseas-text-muted); min-width:32px; text-align:right; }
         .bseas-play-guide-btns { display:flex; gap:10px; justify-content:center; margin-top:16px; }
-        .bseas-follow-btn { position:absolute; right:16px; bottom:96px; padding:8px 18px; border-radius:9999px; background:#fff; color:var(--bseas-text); border:1px solid var(--bseas-border); cursor:pointer; display:none; align-items:center; justify-content:center; gap:6px; z-index:30; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); font-size:13px; font-weight:400; box-shadow:0 2px 8px rgba(0,0,0,0.06); }
-        .bseas-follow-btn:hover { transform:translateY(-1px); border-color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.18); }
-        .bseas-follow-btn.active { background:var(--bseas-primary); color:#fff; border-color:var(--bseas-primary); animation:bseas-follow-pulse 2s ease-in-out infinite; }
-        .bseas-follow-btn svg { width:14px; height:14px; flex-shrink:0; }
-        @keyframes bseas-follow-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
-        .bseas-back-top-btn { position:absolute; right:16px; bottom:140px; width:36px; height:36px; border-radius:50%; background:#fff; color:var(--bseas-text); border:1px solid var(--bseas-border); cursor:pointer; display:none; align-items:center; justify-content:center; z-index:30; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 2px 8px rgba(0,0,0,0.06); }
-        .bseas-back-top-btn:hover { transform:translateY(-1px); border-color:var(--bseas-primary); color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.18); }
-        .bseas-back-top-btn svg { width:16px; height:16px; flex-shrink:0; }
+        .bseas-play-mode-group { display:flex; gap:8px; }
+        .bseas-play-mode-option { display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border:1px solid var(--bseas-border); border-radius:6px; font-size:13px; color:var(--bseas-text); background:#fff; cursor:pointer; transition:border-color 0.2s, color 0.2s; }
+        .bseas-play-mode-option input { display:none; }
+        .bseas-play-mode-option:hover { border-color:var(--bseas-primary); }
+        .bseas-play-mode-option.checked { border-color:var(--bseas-primary); color:var(--bseas-primary); }
+        /* 样式行的间距由自身 margin 承担：坍缩到 0 高时上下间距随 margin 一起归零，与隐藏状态无缝衔接 */
+        #bseas-play-mode-row { margin-bottom:0; }
+        #bseas-play-style-rows { margin-top:16px; }
+        #bseas-play-style-rows .bseas-play-guide-row:last-child { margin-bottom:0; }
         .bseas-subtitle-item.current-follow { background:rgba(0,174,236,0.1); border-radius:6px; transition:background 0.3s ease; }
+        .bseas-opinion-chart { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; margin:14px 0; padding:16px; background:var(--bseas-bg-card); border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-md); }
+        .bseas-opinion-chart svg { width:106px; height:106px; flex-shrink:0; }
+        .bseas-opinion-chart .bseas-opinion-chart-center { font-size:11px; font-weight:600; fill:var(--bseas-text-dim); }
+        .bseas-opinion-chart .bseas-opinion-chart-center-value { font-size:14px; font-weight:700; fill:var(--bseas-text); }
+        .bseas-opinion-chart-legend { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px 16px; }
+        .bseas-opinion-chart-item { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--bseas-text-dim); }
+        .bseas-opinion-chart-dot { width:10px; height:10px; border-radius:3px; flex-shrink:0; }
+        .bseas-opinion-chart-value { font-weight:600; color:var(--bseas-text); }
+        .bseas-opinion-chart-error { display:flex; align-items:center; gap:6px; margin:14px 0; padding:10px 14px; font-size:13px; color:var(--bseas-warning-text); background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-sm); }
         .bseas-jump-btn { position:absolute; top:50%; right:10px; transform:translateY(-50%); width:26px; height:26px; border:none; border-radius:8px; background:#f1f5f9; color:var(--bseas-text-dim); cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background 0.2s, color 0.2s; z-index:2; }
         .bseas-jump-btn:hover { background:var(--bseas-primary); color:#ffffff; }
         .bseas-jump-btn svg { width:14px; height:14px; fill:currentColor; }
@@ -623,7 +724,11 @@
         .bseas-retry-btn svg { width:16px; height:16px; fill:currentColor; transition:transform 0.4s ease; }
         .bseas-retry-btn:hover svg { transform:rotate(180deg) scale(1.1); }
         .bseas-ai-result { background:white; border-radius:var(--bseas-radius-md); padding:24px; margin-bottom:16px; border:1px solid var(--bseas-border); color:var(--bseas-text); line-height:1.8; font-size:15px; transition:box-shadow 0.2s; }
+        .bseas-ai-result.stretch { flex:1; min-height:0; overflow-y:auto; margin-bottom:0; }
         .bseas-ai-result:hover { box-shadow:0 4px 12px rgba(0,0,0,0.04); }
+        .bseas-stale-hint { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--bseas-text-muted); margin:0 0 10px; cursor:pointer; user-select:none; }
+        .bseas-stale-hint:hover { color:var(--bseas-primary); text-decoration:underline; }
+        .bseas-stale-hint svg { width:13px; height:13px; flex-shrink:0; }
         .bseas-markdown h1 { font-size:20px; font-weight:800; margin:24px 0 12px; padding-bottom:10px; border-bottom:1px solid var(--bseas-border); }
         .bseas-markdown h2 { font-size:18px; font-weight:700; margin:20px 0 10px; }
         .bseas-markdown h3 { font-size:16px; font-weight:700; color:var(--bseas-primary); margin:18px 0 8px; }
@@ -748,7 +853,13 @@
         }
         .bseas-btn { flex:1; min-width:0; padding:12px 8px; border:0.5px solid var(--bseas-border); border-radius:var(--bseas-radius-md); font-size:13.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); position:relative; overflow:hidden; backdrop-filter:blur(8px) saturate(140%); -webkit-backdrop-filter:blur(8px) saturate(140%); }
         .bseas-btn svg { width:15px; height:15px; fill:currentColor; flex-shrink:0; }
-        #bseas-play-btn svg { width:12px; height:12px; transform:translateX(1px); }
+        #bseas-play-btn svg { width:19px; height:19px; }
+        #bseas-download-btn svg { width:17px; height:17px; }
+        #bseas-play-btn svg, #bseas-download-btn svg { fill:none; stroke:currentColor; stroke-linecap:round; stroke-linejoin:round; }
+        #bseas-play-btn svg { stroke-width:1.9; }
+        #bseas-download-btn svg { stroke-width:1.8; }
+        .bseas-btn.following { border-color:var(--bseas-primary); color:var(--bseas-primary); box-shadow:0 0 0 2px rgba(0,174,236,0.12); }
+        .bseas-opinion-chart-slot { display:none; }
         .bseas-btn::before { content:''; position:absolute; top:0; left:-100%; width:100%; height:100%; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.1),transparent); transition:left 0.5s ease; }
         .bseas-btn:hover:not(:disabled)::before { left:100%; }
         .bseas-btn-primary { background:rgba(0,174,236,0.88); color:white; }
@@ -860,10 +971,28 @@
     function getCachedPrompt(videoKey) { const e = aiSummaryCache[videoKey]; return (!e || typeof e === 'string') ? null : (e.prompt || ''); }
     function getCachedSummary(videoKey) { const e = aiSummaryCache[videoKey]; if (!e) return null; return typeof e === 'string' ? e : (e.summary || null); }
     function getCachedQA(videoKey) { const e = aiSummaryCache[videoKey]; return (!e || typeof e === 'string') ? [] : (Array.isArray(e.qa) ? e.qa : []); }
+    // 影响 AI 返回内容的设置项签名：版本或任一设置变化即视为缓存结果已过时
+    function aiOutputSignature() {
+        return [
+            SCRIPT_VERSION,
+            'detail:' + bseas_detail_level,
+            'opinion:' + (bseas_opinion_analysis ? 1 : 0),
+            'opinionCount:' + bseas_opinion_comments_count,
+            'aiEval:' + (bseas_ai_evaluation ? 1 : 0),
+            'skipAd:' + (bseas_auto_skip_ad ? 1 : 0),
+            'disableApi:' + (bseas_disable_api ? 1 : 0),
+            'model:' + bseas_platform + '/' + bseas_model
+        ].join('|');
+    }
+    function isCachedSummaryStale(videoKey) {
+        const e = aiSummaryCache[videoKey];
+        if (!e || typeof e === 'string') return false;
+        return (e.sig || '') !== aiOutputSignature();
+    }
     function setCachedSummary(videoKey, prompt, summary) {
         const existing = aiSummaryCache[videoKey];
         const qa = (existing && Array.isArray(existing.qa)) ? existing.qa : [];
-        aiSummaryCache[videoKey] = { prompt, summary, qa, ts: Date.now() };
+        aiSummaryCache[videoKey] = { prompt, summary, qa, sig: aiOutputSignature(), ts: Date.now() };
         GM_setValue('aiSummaryCache', aiSummaryCache);
     }
     function overwriteCachedAdAsNone(videoKey) {
@@ -1185,6 +1314,112 @@
     }
 
     // ===================== 12. Markdown 渲染 =====================
+    // 舆论图：AI 以 [positive]:20 / [neutral]:50 / [negative]:30 三行输出，此处负责解析、校验与渲染
+    const OPINION_CHART_TOKEN = '<<<BSEAS_OPINION_CHART>>>';
+    const OPINION_CHART_LINE_RE = /^\s*(?:[-*]\s*)?\*{0,2}\s*\[\s*(positive|neutral|negative)\s*\]\s*\*{0,2}\s*[:：]\s*\*{0,2}\s*(\d{1,3})\s*\*{0,2}\s*%?\s*$/i;
+    const OPINION_CHART_COLORS = { positive: '#5cc98a', neutral: '#a3aebd', negative: '#f0938f' };
+    const OPINION_CHART_FIX_PROMPT = '你没有正确输出舆论图。请只输出三行，严格按以下格式：\n[positive]:正整数\n[neutral]:正整数\n[negative]:正整数\n三个数字之和必须等于 100，不要输出任何其他内容。';
+
+    function parseOpinionChartValues(text) {
+        const found = {};
+        const lines = String(text || '').split('\n');
+        let inCode = false;
+        for (const line of lines) {
+            if (line.trim().startsWith('```')) { inCode = !inCode; continue; }
+            if (inCode) continue;
+            const m = line.match(OPINION_CHART_LINE_RE);
+            if (!m) continue;
+            const key = m[1].toLowerCase();
+            if (Object.prototype.hasOwnProperty.call(found, key)) return null;
+            found[key] = parseInt(m[2], 10);
+        }
+        for (const k of OPINION_CHART_KEYS) {
+            const v = found[k];
+            if (typeof v !== 'number' || !isFinite(v) || v < 0 || v > 100) return null;
+        }
+        const sum = OPINION_CHART_KEYS.reduce((s, k) => s + found[k], 0);
+        if (sum !== 100) return null;
+        return found;
+    }
+    function stripOpinionChartLines(text) {
+        const lines = String(text || '').split('\n');
+        const kept = [];
+        let had = false;
+        for (const line of lines) {
+            if (OPINION_CHART_LINE_RE.test(line)) { had = true; continue; }
+            kept.push(line);
+        }
+        return { text: kept.join('\n'), had };
+    }
+    function insertOpinionChartBlock(text, block) {
+        const lines = String(text || '').split('\n');
+        let idx = -1;
+        for (let i = lines.length - 1; i >= 0; i--) {
+            const t = lines[i].trim();
+            if (t.includes('[AD]') || (t.startsWith('###') && t.includes('广告时间'))) { idx = i; break; }
+        }
+        if (idx < 0) return String(text || '').replace(/\s+$/, '') + '\n\n' + block;
+        lines.splice(idx, 0, block);
+        return lines.join('\n');
+    }
+    function extractOpinionChart(summary) {
+        const values = parseOpinionChartValues(summary);
+        const lines = String(summary || '').split('\n');
+        const kept = [];
+        let tokenInserted = false;
+        let inCode = false;
+        for (const line of lines) {
+            if (line.trim().startsWith('```')) { inCode = !inCode; kept.push(line); continue; }
+            if (!inCode && OPINION_CHART_LINE_RE.test(line)) {
+                if (!tokenInserted) { kept.push(OPINION_CHART_TOKEN); tokenInserted = true; }
+                continue;
+            }
+            kept.push(line);
+        }
+        return { status: values ? 'ok' : 'error', data: values, text: kept.join('\n'), had: tokenInserted };
+    }
+    function buildOpinionChartHtml(data) {
+        const R = 42;
+        const C = 2 * Math.PI * R;
+        let offset = 0;
+        const segs = OPINION_CHART_KEYS.map(k => {
+            const v = data[k] || 0;
+            const len = C * v / 100;
+            const seg = `<circle cx="50" cy="50" r="${R}" fill="none" stroke="${OPINION_CHART_COLORS[k]}" stroke-width="13" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 50 50)"></circle>`;
+            offset += len;
+            return seg;
+        }).join('');
+        // 相邻扇区之间叠加细白分割线 避免交界处有视觉立体高度感
+        const boundaries = [];
+        for (let i = 0; i < OPINION_CHART_KEYS.length; i++) {
+            const prevKey = OPINION_CHART_KEYS[(i - 1 + OPINION_CHART_KEYS.length) % OPINION_CHART_KEYS.length];
+            const nextKey = OPINION_CHART_KEYS[i];
+            // 交界两侧任一扇区为零宽时不画线
+            if ((data[prevKey] || 0) <= 0 || (data[nextKey] || 0) <= 0) continue;
+            boundaries.push(OPINION_CHART_KEYS.slice(0, i).reduce((s, kk) => s + (data[kk] || 0), 0));
+        }
+        const dividers = boundaries.map(p => {
+            const pos = C * p / 100;
+            return `<circle cx="50" cy="50" r="${R}" fill="none" stroke="#ffffff" stroke-width="13" stroke-dasharray="1.6 ${(C - 1.6).toFixed(2)}" stroke-dashoffset="${(1.6 / 2 - pos).toFixed(2)}" transform="rotate(-90 50 50)"></circle>`;
+        }).join('');
+        const top = OPINION_CHART_KEYS.reduce((a, b) => (data[a] >= data[b] ? a : b), OPINION_CHART_KEYS[0]);
+        const legend = OPINION_CHART_KEYS.map(k => `<div class="bseas-opinion-chart-item"><span class="bseas-opinion-chart-dot" style="background:${OPINION_CHART_COLORS[k]};"></span><span>${OPINION_CHART_LABELS[k]}</span><span class="bseas-opinion-chart-value">${data[k]}%</span></div>`).join('');
+        return `<div class="bseas-opinion-chart"><svg viewBox="0 0 100 100" role="img" aria-label="舆论倾向占比">${segs}${dividers}<text x="50" y="47" text-anchor="middle" class="bseas-opinion-chart-center">${OPINION_CHART_LABELS[top]}</text><text x="50" y="62" text-anchor="middle" class="bseas-opinion-chart-center-value">${data[top]}%</text></svg><div class="bseas-opinion-chart-legend">${legend}</div></div>`;
+    }
+    function renderAISummaryInto(el, md) {
+        if (!el) return;
+        const parsed = extractOpinionChart(md);
+        safeSetInnerHTML(el, markdownToHtml(parsed.text));
+        renderLatex(el);
+        // 仅在 AI 确实输出过舆论图行但格式非法时提示错误；从未请求/旧版本缓存不提示
+        if (parsed.status !== 'ok' && !parsed.had) return;
+        const slot = el.querySelector('.bseas-opinion-chart-slot');
+        const html = parsed.status === 'ok'
+            ? buildOpinionChartHtml(parsed.data)
+            : '<div class="bseas-opinion-chart-error"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16.5v.01"></path></svg>舆论图数据错误</div>';
+        if (slot) { slot.insertAdjacentHTML('afterend', html); slot.remove(); }
+        else el.insertAdjacentHTML('beforeend', html);
+    }
     function processInline(text) {
         text = escapeHtml(text);
         return text
@@ -1207,6 +1442,8 @@
             const indent = line.match(/^[ \t]*/)[0].replace(/\t/g, '    ').length;
             const t = line.trim();
             if (!t) continue;
+            if (t === OPINION_CHART_TOKEN) { out.push('<div class="bseas-opinion-chart-slot"></div>'); continue; }
+            if (OPINION_CHART_LINE_RE.test(t)) continue;
             const ul = t.match(/^[-*][ \t]+(.*)$/), ol = t.match(/^\d+\.[ \t]+(.*)$/);
             if (ul || ol) {
                 const type = ul ? 'ul' : 'ol', cnt = processInline(ul ? ul[1] : ol[1]);
@@ -1286,7 +1523,18 @@
         return { type: 'error', segments: [] };
     }
     function stripAdLine(summary) {
-        return cutAdFromSummary(summary).before;
+        const { found, before } = cutAdFromSummary(summary);
+        // 未检测到广告行时不改正文，避免误删正文末尾的合法分割线
+        if (!found) return before;
+        // 广告行被截断后，其上方用于分隔广告输出的空白行与连续 --- 会失去意义，一并去除
+        const lines = before.split('\n');
+        let end = lines.length;
+        while (end > 0) {
+            const t = lines[end - 1].trim();
+            if (t === '' || /^-{3,}$/.test(t)) { end--; continue; }
+            break;
+        }
+        return lines.slice(0, end).join('\n').trimEnd();
     }
     function notifyAdDetected() {
         if (adDetectionNotified || !adSegments || adSegments.length === 0) return;
@@ -1398,10 +1646,13 @@
         if (!aid) { try { aid = unsafeWindow.__INITIAL_STATE__?.aid; } catch (e) {} }
         if (!aid) return [];
         try {
-            const r = await fetch(`https://api.bilibili.com/x/v2/reply/main?type=1&oid=${aid}&mode=3&next=0&ps=${bseas_save_tokens ? 10 : bseas_opinion_comments_count}`, { credentials: 'include' });
+            const r = await fetch(`https://api.bilibili.com/x/v2/reply/main?type=1&oid=${aid}&mode=3&next=0&ps=${bseas_opinion_comments_count}`, { credentials: 'include' });
             const d = await r.json();
             if (d.code !== 0 || !d.data?.replies) return [];
-            return d.data.replies.map(r => ({ content: r.content.message, like: r.like }));
+            return d.data.replies
+                .map(r => ({ content: r.content?.message || '', like: Number(r.like) || 0 }))
+                .filter(c => c.content)
+                .sort((a, b) => b.like - a.like);
         } catch (e) { return []; }
     }
 
@@ -1519,33 +1770,19 @@
     }
     function buildFullPrompt(subtitleText, includeFormatRules = true) {
         const hasSubtitle = !!subtitleText.trim();
-        let contextInfo = '';
-        const today = new Date();
-        const weekdays = ['日','一','二','三','四','五','六'];
-        const dateStr = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日 星期${weekdays[today.getDay()]}`;
-        contextInfo += `今天是${dateStr}。\n`;
-        const videoTitle = getVideoTitle();
-        const videoDesc = getVideoDescription();
-        const videoTags = getVideoTags();
-        if (videoTitle) contextInfo += `视频标题：「${videoTitle}」\n`;
-        if (videoDesc) contextInfo += `视频简介：「${videoDesc}」\n`;
-        if (videoTags.length > 0) contextInfo += `视频标签：${videoTags.join(', ')}\n`;
-        const upName = getUpName();
-        const multiPart = isMultiPartVideo();
-        const partNum = getVideoPartNumber() ?? (multiPart ? 1 : null);
-        const partTitle = multiPart ? getCurrentPartTitle() : '';
-        const subLang = getCurrentSubtitleLanguage();
-        if (upName) contextInfo += `UP主（UP主不一定是出镜人，可能是转载）：「${upName}」\n`;
-        if (partNum !== null) contextInfo += `当前分P：第${partNum}P${partTitle ? `「${partTitle}」` : ''}\n`;
-        if (subLang) contextInfo += `字幕语言：${subLang}\n`;
-        if (contextInfo) contextInfo += '\n';
-        const commentsText = (bseas_opinion_analysis && hotComments.length > 0) ? formatCommentsForAI() : '';
-        if (commentsText) contextInfo += `===== 热门评论（按热度排序）=====\n${commentsText}\n\n`;
         const adHint = hasSubtitle && subtitleContainsAdKeyword();
-        const usePlain = bseas_save_tokens && !adHint;
-        const finalSubtitle = hasSubtitle ? (usePlain ? getPlainSubtitleText() : subtitleText) : '';
-        const toolIdentity = '你是哔哩哔哩辅助工具的AI分析模块，正在分析B站视频字幕内容。';
-        return `${toolIdentity}\n\n${getAISummaryPrompt(hasSubtitle, includeFormatRules, adHint)}\n\n${contextInfo}${hasSubtitle ? '===== 视频字幕 =====\n' + finalSubtitle : ''}`;
+        const opinionEnabled = bseas_opinion_analysis;
+        const hasComments = opinionEnabled && hotComments.length >= MIN_OPINION_COMMENTS;
+        return getAISummaryPrompt({
+            hasSubtitle,
+            includeFormatRules,
+            adHint,
+            opinionEnabled,
+            hasComments,
+            aiEvalEnabled: bseas_ai_evaluation,
+            subtitleText: hasSubtitle ? subtitleText : '',
+            commentsText: hasComments ? formatCommentsForAI() : ''
+        });
     }
     function buildCorrectSubtitlePrompt() {
         const title = getVideoTitle();
@@ -1565,7 +1802,7 @@
         if (partNum !== null) ctx += `当前分P：第${partNum}P\n`;
         if (subLang) ctx += `字幕语言：${subLang}\n`;
         const commentsText = hotComments.length > 0 ? formatCommentsForAI() : '';
-        if (commentsText) ctx += `\n===== 热门评论（按热度排序，可能含黑话/专有名词的正确表述，仅作修正参考）=====\n${commentsText}\n`;
+        if (commentsText) ctx += `\n===== 热门评论（智能排序，可能含黑话/专有名词的正确表述，仅作修正参考）=====\n${commentsText}\n`;
         const curBody = currentSubtitleData?.body || [];
         const curJson = JSON.stringify(curBody.map(it => ({ content: it.content })));
         let otherTracks = '';
@@ -1706,6 +1943,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             }
         };
     }
+    function opinionChartExpected() {
+        return bseas_opinion_analysis && hotComments.length >= MIN_OPINION_COMMENTS;
+    }
     async function generateAISummaryStream(subtitleText, streamEl, shouldRender) {
         const fullPrompt = buildFullPrompt(subtitleText);
         const messages = [{ role: 'user', content: fullPrompt }];
@@ -1714,7 +1954,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         renderer.finalize(summary);
         currentStreamText = '';
         let adCheck = extractAdSegments(summary);
-        if (bseas_save_tokens && !subtitleContainsAdKeyword()) adCheck = { type: 'none', segments: [] };
         lastAdCheckResult = adCheck;
 
         setCachedSummary(currentVideoKey, fullPrompt, summary);
@@ -1731,12 +1970,28 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 summary = summary + '\n' + fix.trim();
                 adCheck = extractAdSegments(summary);
                 lastAdCheckResult = adCheck;
-                safeSetInnerHTML(streamEl, markdownToHtml(summary));
-                renderLatex(streamEl);
+                renderAISummaryInto(streamEl, summary);
                 setCachedSummary(currentVideoKey, fullPrompt, summary);
                 aiConversationHistory[1].content = summary;
                 adSegments = adCheck.segments;
                 if (adSegments.length > 0) { initProgressMark(); initAdSkipMonitor(); notifyAdDetected(); }
+            } catch (e) {}
+        }
+
+        if (opinionChartExpected() && extractOpinionChart(summary).status !== 'ok') {
+            safeSetInnerHTML(streamEl, markdownToHtml(stripOpinionChartLines(summary).text) + '<div style="margin-top:14px;color:#f59e0b;font-size:13px;display:flex;align-items:center;gap:6px;"><div class="bseas-spinner" style="width:14px;height:14px;border-width:2px;"></div>舆论图格式校验修正中...</div>');
+            messages.push({ role: 'assistant', content: summary });
+            messages.push({ role: 'user', content: OPINION_CHART_FIX_PROMPT });
+            try {
+                const fix = await callAPINoStream(messages);
+                // 仅接受规范化后的三行，避免把模型的解释性文字写进摘要
+                const fixedValues = parseOpinionChartValues(fix);
+                if (!fixedValues) return summary;
+                const fixedBlock = OPINION_CHART_KEYS.map(k => `[${k}]:${fixedValues[k]}`).join('\n');
+                summary = insertOpinionChartBlock(stripOpinionChartLines(summary).text, fixedBlock);
+                renderAISummaryInto(streamEl, summary);
+                setCachedSummary(currentVideoKey, fullPrompt, summary);
+                if (aiConversationHistory[1]) aiConversationHistory[1].content = summary;
             } catch (e) {}
         }
         return summary;
@@ -2158,8 +2413,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         _lastTabIndex = newIdx < 0 ? 0 : newIdx;
         currentTab = tab;
         if (followModeActive && tab !== 'preview') stopFollowMode();
-        updateFollowBtnVisibility();
-        updateBackTopBtnVisibility();
         const tabsEl = document.querySelector('.bseas-tabs');
         if (tabsEl) tabsEl.classList.toggle('hidden', tab === 'settings');
         document.querySelectorAll('.bseas-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
@@ -2170,6 +2423,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             fSettings.style.display = tab === 'settings' ? 'flex' : 'none';
         }
         updateContent();
+        updateTabBackTopHint();
         const panel = document.querySelector('.bseas-panel');
         const _ft2 = panel?.querySelector('.bseas-footer');
         if (_ft2 && panel.classList.contains('show')) panel.style.setProperty('--bseas-footer-h', (_ft2.offsetHeight + 14) + 'px');
@@ -2182,6 +2436,26 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
 
     // ===================== 17. UI 创建与事件 =====================
+    // 触发按钮配色刷新与窗口尺寸重定位只在首次加载时注册一次：createUI 会在保存设置后重建面板，
+    // 若在此处注册会导致定时器与 resize 监听随重建次数累积
+    let triggerColorTimer = null;
+    let layoutResizeBound = false;
+    function startTriggerColorLoop() {
+        if (triggerColorTimer) return;
+        triggerColorTimer = setInterval(updateTriggerBtnColor, 3000);
+    }
+    function bindPanelResize() {
+        if (layoutResizeBound) return;
+        layoutResizeBound = true;
+        window.addEventListener('resize', () => {
+            const container = document.querySelector('.bseas-container');
+            if (!container) return;
+            const panel = container.querySelector('.bseas-panel');
+            if (panel) panel.classList.add('no-transition');
+            applySavedPanelPosition(container);
+            if (panel) requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('no-transition')));
+        });
+    }
     function createUI() {
         if (document.querySelector('.bseas-container')) return;
         const c = document.createElement('div');
@@ -2204,12 +2478,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 <div class="bseas-api-warning-container">${showApiWarning ? `<div class="bseas-api-warning"><span class="bseas-api-warning-icon">⚠</span><span class="bseas-api-warning-text">未设置API Key，AI分析功能将无法使用</span><button class="bseas-api-warning-btn" id="bseas-go-settings">去设置</button></div>` : ''}</div>
                 <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-collapse" id="bseas-source-collapse"><div class="bseas-collapse-inner"><div class="bseas-source-body" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div></div></div>
                 <div class="bseas-tabs"><button class="bseas-tab active" data-tab="preview">浏览</button><button class="bseas-tab" data-tab="ai">AI 分析</button><button class="bseas-tab" data-tab="text">文本</button></div></div><div class="bseas-tab-body"><div class="bseas-empty">正在初始化...</div></div></div>
-                <button class="bseas-follow-btn" id="bseas-follow-btn" title="字幕跟随视频滚动"><svg viewBox="0 0 24 24" fill="none"><path d="M4 8L12 16L20 8" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>跟随视频</span></button>
-                <button class="bseas-back-top-btn" id="bseas-back-top-btn" title="回到顶部"><svg viewBox="0 0 24 24" fill="none"><path d="M12 20V4M5 11l7-7 7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
                 <div class="bseas-footer">
                     <div id="bseas-footer-normal" style="display:flex;gap:12px;width:100%;">
-                        <button class="bseas-btn bseas-btn-secondary" id="bseas-play-btn" disabled><svg viewBox="0 0 1024 1024" width="20" height="20"><path fill="currentColor" d="M882.734114 459.147258l0.024559-0.024559L244.016061 21.12718l-0.199545 0.188288C230.582097 8.748245 212.62819 1.014096 192.840518 1.014096c-40.704051 0-73.699536 32.66905-73.699536 72.996524 0 22.148439-0.954745 65.513086 0 64.572668l0 373.422851 0 393.071354c0 0.325411 0 25.249057 0 44.935422 0 40.302915 32.995485 72.972988 73.699536 72.972988 19.862373 0 37.892005-7.78429 51.125401-20.466124l0.050142 0.025583 638.742613-437.982216-0.024559-0.038886c13.886265-13.270235 22.549575-31.889291 22.549575-52.531424 0-0.050142 0-0.088004 0-0.150426 0-0.050142 0-0.11154 0-0.149403C905.28369 491.048829 896.620379 472.41647 882.734114 459.147258z"/></svg>播放</button>
-                        <button class="bseas-btn bseas-btn-secondary" id="bseas-download-btn" disabled><svg viewBox="0 0 1024 1024" width="18" height="18"><path fill="currentColor" d="M498.347 824.32l-296.96-296.96c-11.947-11.947-3.414-34.133 13.653-34.133h160.427c11.946 0 20.48-8.534 20.48-20.48V54.613c0-11.946 8.533-20.48 20.48-20.48h189.44c11.946 0 20.48 8.534 20.48 20.48v418.134c0 11.946 8.533 20.48 20.48 20.48h160.426c18.774 0 27.307 22.186 13.654 34.133L525.653 824.32c-6.826 6.827-20.48 6.827-27.306 0zM916.48 989.867H107.52c-18.773 0-35.84-15.36-35.84-35.84 0-18.774 15.36-35.84 35.84-35.84h810.667c18.773 0 35.84 15.36 35.84 35.84-1.707 20.48-17.067 35.84-37.547 35.84z"/></svg>下载</button>
+                        <button class="bseas-btn bseas-btn-secondary" id="bseas-play-btn" disabled><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 4.8c-1.7-0.9-3.1-0.2-3.1 1.6v11.2c0 1.8 1.4 2.5 3.1 1.6l9.6-5.5c1.7-0.9 1.7-2.5 0-3.4z"/></svg>播放</button>
+                        <button class="bseas-btn bseas-btn-secondary" id="bseas-download-btn" disabled><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4 20h16"/></svg>下载</button>
                         <button class="bseas-btn bseas-btn-secondary" id="bseas-copy-btn" disabled><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>复制全部</button>
                     </div>
                     <div id="bseas-footer-settings" style="display:none;gap:12px;width:100%;">
@@ -2226,16 +2498,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         makeResizable(c);
         bindEvents(c);
         updateTriggerBtnColor();
-        setInterval(updateTriggerBtnColor, 3000);
+        startTriggerColorLoop();
         if (hasUpdate) showUpdateBadgeInPanel();
-        window.addEventListener('resize', () => {
-            const container = document.querySelector('.bseas-container');
-            if (!container) return;
-            const panel = container.querySelector('.bseas-panel');
-            if (panel) panel.classList.add('no-transition');
-            applySavedPanelPosition(container);
-            if (panel) requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('no-transition')));
-        });
+        bindPanelResize();
     }
     function applySavedPanelPosition(container) {
         const panel = container.querySelector('.bseas-panel');
@@ -2566,13 +2831,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         bseas_auto_skip_ad = chk('bseas-s-auto-skip', bseas_auto_skip_ad);
         bseas_auto_open_panel = chk('bseas-s-auto-open', bseas_auto_open_panel);
         bseas_auto_open_tab = val('bseas-s-auto-tab', bseas_auto_open_tab);
-        bseas_save_tokens = chk('bseas-s-save-tokens', bseas_save_tokens);
-        if (!bseas_save_tokens) {
-            const dv = val('bseas-s-detail', null);
-            if (dv) bseas_detail_level = dv;
-            const oc = document.getElementById('bseas-s-opinion-count');
-            if (oc) bseas_opinion_comments_count = parseInt(oc.value) || 30;
-        }
+        const dv = val('bseas-s-detail', null);
+        if (dv) bseas_detail_level = dv;
+        const oc = document.getElementById('bseas-s-opinion-count');
+        if (oc) bseas_opinion_comments_count = parseInt(oc.value) || 30;
         bseas_disable_api = chk('bseas-s-disable-api', bseas_disable_api);
         bseas_panel_pos_preset = val('bseas-s-pos-preset', bseas_panel_pos_preset);
         bseas_max_preview_subtitles = parseInt(val('bseas-s-max-preview', bseas_max_preview_subtitles)) || 600;
@@ -2598,7 +2860,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         GM_setValue('bseas_confirm_chars', bseas_confirm_chars);
         GM_setValue('bseas_ai_evaluation', bseas_ai_evaluation);
         GM_setValue('bseas_update_mode', bseas_update_mode);
-        GM_setValue('bseas_save_tokens', bseas_save_tokens);
         GM_deleteValue('bseas_panel_position');
     }
     function bindEvents(c) {
@@ -2637,7 +2898,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 if (_tb) _tb.classList.remove('anim-right', 'anim-left');
                 const _ft = panel.querySelector('.bseas-footer');
                 if (_ft) panel.style.setProperty('--bseas-footer-h', (_ft.offsetHeight + 14) + 'px');
-                updateBackTopBtnVisibility();
+                updateTabBackTopHint();
                 if (allSubtitles.length === 0) fetchAllSubtitles();
             }
         });
@@ -2656,7 +2917,11 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             c.querySelector('#bseas-source-arrow').classList.toggle('collapsed', sourceCollapsed);
             if (!sourceCollapsed) prefetchAllSubtitleBodies();
         });
-        c.querySelectorAll('.bseas-tab').forEach(tab => tab.addEventListener('click', (e) => { e.stopPropagation(); switchTab(tab.dataset.tab); }));
+        c.querySelectorAll('.bseas-tab').forEach(tab => tab.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (tab.dataset.tab === currentTab) { scrollContentToTop(); return; }
+            switchTab(tab.dataset.tab);
+        }));
         c.querySelector('#bseas-refresh-btn').addEventListener('click', e => { e.stopPropagation(); if (!isLoading) fetchAllSubtitles(true); });
         c.querySelector('#bseas-settings-btn').addEventListener('click', e => { e.stopPropagation(); switchTab(currentTab === 'settings' ? 'preview' : 'settings'); });
         c.querySelector('#bseas-go-settings')?.addEventListener('click', e => { e.stopPropagation(); switchTab('settings'); });
@@ -2666,9 +2931,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         });
         c.querySelector('#bseas-play-btn').addEventListener('click', e => { e.stopPropagation(); togglePlayMode(); });
         c.querySelector('#bseas-download-btn').addEventListener('click', e => { e.stopPropagation(); openDownloadMenu(); });
-        c.querySelector('#bseas-follow-btn').addEventListener('click', e => { e.stopPropagation(); toggleFollowMode(); });
-        c.querySelector('#bseas-back-top-btn').addEventListener('click', e => { e.stopPropagation(); if (followModeActive) stopFollowMode(); const ct = document.querySelector('.bseas-content'); if (ct) ct.scrollTo({ top:0, behavior:'smooth' }); });
-        bindBackTopScroll();
+        bindTabBackTopHint();
         bindFollowExitScroll();
         c.querySelector('#bseas-s-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); switchTab('preview'); });
         c.querySelector('#bseas-s-save')?.addEventListener('click', (e) => {
@@ -2844,10 +3107,76 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const defaultFirstId = zhSub ? zhSub.id : (allOpts[0] ? allOpts[0].id : '');
         const otherOpts = allOpts.filter(s => String(s.id) !== String(defaultFirstId));
         const makeOpt = (s) => `<option value="${escapeHtml(String(s.id))}">${escapeHtml(s.lan_doc || s.lan || '')}</option>`;
-        safeSetInnerHTML(overlay, `<div class="bseas-play-guide"><div class="bseas-play-guide-title">播放模式</div><div class="bseas-play-guide-desc">建议进入「网页全屏」（非全屏），悬浮控件可漂浮在视频上方。</div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">第一语言</span><select id="bseas-play-first">${allOpts.map(makeOpt).join('')}</select></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">第二语言</span><select id="bseas-play-second"><option value="">关闭</option>${otherOpts.map(makeOpt).join('')}</select></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">底色透明度</span><div class="bseas-play-guide-slider"><input type="range" id="bseas-play-opacity" min="0" max="1" step="0.05" value="${playOpacity}"><span id="bseas-play-opacity-val">${Math.round(playOpacity * 100)}%</span></div></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">文字大小</span><div class="bseas-play-guide-slider"><input type="range" id="bseas-play-fontsize" min="12" max="36" step="1" value="${playFontSize}"><span id="bseas-play-fontsize-val">${playFontSize}px</span></div></div><div class="bseas-play-guide-btns"><button class="bseas-edit-modal-btn cancel" id="bseas-play-guide-cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-play-guide-go">开始播放</button></div></div>`);
+        safeSetInnerHTML(overlay, `<div class="bseas-play-guide"><div class="bseas-play-guide-title">播放模式</div><div class="bseas-play-guide-desc" id="bseas-play-guide-desc">建议进入「网页全屏」（非全屏），悬浮控件可漂浮在视频上方。</div><div class="bseas-play-guide-row" id="bseas-play-mode-row"><span class="bseas-play-guide-label">播放方式</span><div class="bseas-play-mode-group"><label class="bseas-play-mode-option checked"><input type="radio" name="bseas-play-mode" value="overlay" checked><span>视频下显示字幕</span></label><label class="bseas-play-mode-option"><input type="radio" name="bseas-play-mode" value="follow"><span>跟随视频</span></label></div></div><div id="bseas-play-style-rows"><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">第一语言</span><select id="bseas-play-first">${allOpts.map(makeOpt).join('')}</select></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">第二语言</span><select id="bseas-play-second"><option value="">关闭</option>${otherOpts.map(makeOpt).join('')}</select></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">底色透明度</span><div class="bseas-play-guide-slider"><input type="range" id="bseas-play-opacity" min="0" max="1" step="0.05" value="${playOpacity}"><span id="bseas-play-opacity-val">${Math.round(playOpacity * 100)}%</span></div></div><div class="bseas-play-guide-row"><span class="bseas-play-guide-label">文字大小</span><div class="bseas-play-guide-slider"><input type="range" id="bseas-play-fontsize" min="12" max="36" step="1" value="${playFontSize}"><span id="bseas-play-fontsize-val">${playFontSize}px</span></div></div></div><div class="bseas-play-guide-btns"><button class="bseas-edit-modal-btn cancel" id="bseas-play-guide-cancel">取消</button><button class="bseas-edit-modal-btn save" id="bseas-play-guide-go">开始播放</button></div></div>`);
         document.body.appendChild(overlay);
         const firstSel = overlay.querySelector('#bseas-play-first');
         if (firstSel) firstSel.value = String(defaultFirstId);
+        const styleRows = overlay.querySelector('#bseas-play-style-rows');
+        const descEl = overlay.querySelector('#bseas-play-guide-desc');
+        const goBtnEl = overlay.querySelector('#bseas-play-guide-go');
+        const getPlayMode = () => {
+            const checked = overlay.querySelector('input[name="bseas-play-mode"]:checked');
+            return checked ? checked.value : 'overlay';
+        };
+        const applyPlayMode = (animate) => {
+            const mode = getPlayMode();
+            if (styleRows) {
+                if (animate) animateStyleRows(mode === 'follow');
+                else styleRows.style.display = mode === 'follow' ? 'none' : '';
+            }
+            if (_playPreviewEl) _playPreviewEl.style.display = mode === 'follow' ? 'none' : '';
+            if (descEl) descEl.textContent = mode === 'follow'
+                ? '字幕浏览列表将跟随视频播放进度自动滚动并高亮当前字幕，可在浏览页查看。'
+                : '建议进入「网页全屏」（非全屏），悬浮控件可漂浮在视频上方。';
+            if (goBtnEl) goBtnEl.textContent = mode === 'follow' ? '开始跟随' : '开始播放';
+        };
+        // 播放方式切换动画：作用在样式行自身的高度与上边距上，按钮行随布局逐帧移动，
+        // 避免「内容瞬时跳位、外框再动画」的抽搐感
+        function animateStyleRows(collapsing) {
+            const el = styleRows;
+            if (!el) return;
+            if (!el.animate) { el.style.display = collapsing ? 'none' : ''; return; }
+            const fromHidden = el.style.display === 'none';
+            // 记录当前视觉高度与上边距（动画进行中即为动画当前值），作为新动画起点，反向切换时不跳变
+            const curH = fromHidden ? 0 : el.offsetHeight;
+            const curMt = fromHidden ? 0 : (parseFloat(getComputedStyle(el).marginTop) || 0);
+            if (el._rowsAnim) { try { el._rowsAnim.cancel(); } catch (e) { /* 已结束 */ } el._rowsAnim = null; }
+            if (collapsing) {
+                if (fromHidden || curH <= 0) return;
+                el.style.overflow = 'hidden';
+                const anim = el.animate(
+                    [{ height: curH + 'px', marginTop: curMt + 'px' }, { height: '0px', marginTop: '0px' }],
+                    { duration: 220, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }
+                );
+                el._rowsAnim = anim;
+                anim.addEventListener('finish', () => {
+                    el.style.display = 'none';
+                    el.style.overflow = '';
+                    el._rowsAnim = null;
+                });
+            } else {
+                if (!fromHidden && curH <= 0) return;
+                el.style.display = '';
+                const toH = el.offsetHeight;
+                if (toH <= 0) return;
+                if (curH === toH && curMt >= 16) { el.style.overflow = ''; return; }
+                el.style.overflow = 'hidden';
+                const anim = el.animate(
+                    [{ height: curH + 'px', marginTop: curMt + 'px' }, { height: toH + 'px', marginTop: '16px' }],
+                    { duration: 220, easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }
+                );
+                el._rowsAnim = anim;
+                anim.addEventListener('finish', () => {
+                    el.style.overflow = '';
+                    el._rowsAnim = null;
+                });
+            }
+        }
+        overlay.querySelectorAll('input[name="bseas-play-mode"]').forEach(r => r.addEventListener('change', () => {
+            overlay.querySelectorAll('.bseas-play-mode-option').forEach(o => o.classList.remove('checked'));
+            r.closest('.bseas-play-mode-option').classList.add('checked');
+            applyPlayMode(true);
+        }));
         const secondSel = overlay.querySelector('#bseas-play-second');
         const rebuildSecondOpts = () => {
             if (!firstSel || !secondSel) return;
@@ -2868,6 +3197,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         previewEl.textContent = '示例字幕预览效果';
         document.body.appendChild(previewEl);
         _playPreviewEl = previewEl;
+        applyPlayMode();
         let pvDragging = false, pvStartY = 0, pvStartBottom = 0;
         const onPreviewMove = (e) => {
             if (!pvDragging) return;
@@ -2906,6 +3236,13 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             const goBtn = e.currentTarget;
             if (goBtn.disabled) return;
             goBtn.disabled = true;
+            if (getPlayMode() === 'follow') {
+                if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); goBtn.disabled = false; return; }
+                closeGuide(false);
+                if (currentTab !== 'preview') switchTab('preview');
+                startFollowMode(video);
+                return;
+            }
             playOpacity = parseFloat(opacityInput.value);
             playFontSize = parseInt(fontsizeInput.value, 10);
             GM_setValue('bseas_play_opacity', playOpacity);
@@ -3016,26 +3353,19 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
 
     let followModeActive = false;
     let followTimeupdateHandler = null;
-    let followCheckInterval = null;
     let followVideoRef = null;
     let followLastIdx = -1;
     let followScrollLockUntil = 0;
-    function toggleFollowMode() {
-        if (followModeActive) { stopFollowMode(); return; }
-        const video = document.querySelector('#bilibili-player video') || document.querySelector('video');
-        if (!video) { showToast('未找到视频元素', 'warning'); return; }
-        if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
-        if (currentTab !== 'preview') { showToast('请先切换到浏览页', 'warning'); return; }
-        startFollowMode(video);
-    }
+    // 跟随视频：作为「播放」的子功能，由播放弹窗选择后启动
     function startFollowMode(video) {
+        if (followModeActive) stopFollowMode();
         followModeActive = true;
         followVideoRef = video;
         followLastIdx = -1;
         // 跟随需按全量字幕定位，搜索过滤会导致错行，开启时自动退出搜索
         if (subtitleSearchKeyword) { clearSubtitleSearchUI(); updatePreviewList(); }
-        const btn = document.getElementById('bseas-follow-btn');
-        if (btn) btn.classList.add('active');
+        const playBtn = document.getElementById('bseas-play-btn');
+        if (playBtn) playBtn.classList.add('following');
         followTimeupdateHandler = () => scrollFollowToCurrent(video);
         video.addEventListener('timeupdate', followTimeupdateHandler);
         scrollFollowToCurrent(video);
@@ -3080,34 +3410,34 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     function stopFollowMode() {
         followModeActive = false;
-        const btn = document.getElementById('bseas-follow-btn');
-        if (btn) btn.classList.remove('active');
+        const playBtn = document.getElementById('bseas-play-btn');
+        if (playBtn) playBtn.classList.remove('following');
         if (followVideoRef && followTimeupdateHandler) followVideoRef.removeEventListener('timeupdate', followTimeupdateHandler);
         followVideoRef = null;
         followTimeupdateHandler = null;
         followLastIdx = -1;
         document.querySelectorAll('.bseas-subtitle-item.current-follow').forEach(el => el.classList.remove('current-follow'));
     }
-    function updateFollowBtnVisibility() {
-        const btn = document.getElementById('bseas-follow-btn');
-        if (!btn) return;
-        const shouldShow = panelVisible && currentTab === 'preview' && !!currentSubtitleData?.body?.length;
-        btn.style.display = shouldShow ? 'flex' : 'none';
-    }
-    function updateBackTopBtnVisibility() {
-        const btn = document.getElementById('bseas-back-top-btn');
-        if (!btn) return;
+    // 一键回顶：点击当前所在页标签即可回到顶部
+    function scrollContentToTop() {
         const content = document.querySelector('.bseas-content');
-        if (!content) { btn.style.display = 'none'; return; }
-        const scrolledDown = content.scrollTop > 200;
-        const shouldShow = panelVisible && currentTab === 'preview' && scrolledDown;
-        btn.style.display = shouldShow ? 'flex' : 'none';
+        if (!content) return;
+        // 回顶由用户主动触发：加锁避免被判定为跟随模式下的手动滚动而静默退出跟随
+        followScrollLockUntil = Date.now() + 900;
+        content.scrollTo({ top: 0, behavior: 'smooth' });
     }
-    function bindBackTopScroll() {
+    function updateTabBackTopHint() {
+        const active = document.querySelector('.bseas-tab.active');
+        if (!active) return;
         const content = document.querySelector('.bseas-content');
-        if (!content || content._bseasBackTopBound) return;
-        content._bseasBackTopBound = true;
-        content.addEventListener('scroll', updateBackTopBtnVisibility);
+        const scrolledDown = !!content && content.scrollTop > 200;
+        active.title = scrolledDown ? '点击回到顶部' : '';
+    }
+    function bindTabBackTopHint() {
+        const content = document.querySelector('.bseas-content');
+        if (!content || content._bseasTabHintBound) return;
+        content._bseasTabHintBound = true;
+        content.addEventListener('scroll', updateTabBackTopHint, { passive: true });
     }
     // 跟随模式下用户手动翻页/滚动时自动退出跟随：优先用输入事件判定，滚动事件仅作滚动条拖动的兜底
     function bindFollowExitScroll() {
@@ -3126,10 +3456,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         content.addEventListener('scroll', () => {
             if (followModeActive && Date.now() > followScrollLockUntil) exitIfFollowing();
         }, { passive: true });
-    }
-    function startFollowCheck() {
-        if (followCheckInterval) clearInterval(followCheckInterval);
-        followCheckInterval = setInterval(() => { updateFollowBtnVisibility(); updateBackTopBtnVisibility(); }, 1000);
     }
 
     // ===================== 18. 文本格式化 =====================
@@ -3242,7 +3568,12 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             }
         }
         if (currentSubtitleData?.body) {
-            if (info) info.textContent = `成功解析 ${currentSubtitleData.body.length} 条字幕 · ${hotComments.length} 条评论${bseas_save_tokens ? ' · 省 Tokens' : ''}`;
+            if (info) {
+                const commentPart = hotComments.length >= MIN_OPINION_COMMENTS
+                    ? `${hotComments.length} 条评论`
+                    : `${hotComments.length} 条评论（不进行舆论分析）`;
+                info.textContent = `成功解析 ${currentSubtitleData.body.length} 条字幕 · ${commentPart}`;
+            }
             if (copyBtn) copyBtn.disabled = false;
             if (playBtn) playBtn.disabled = false;
             if (dlBtn) dlBtn.disabled = false;
@@ -3688,7 +4019,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (!cachedSummary) {
             if (isGeneratingAI && !bseas_disable_api) {
                 const streamHtml = currentStreamText ? markdownToHtml(currentStreamText) : '<div class="bseas-loading"><div class="bseas-spinner"></div><div>生成中...</div></div>';
-                html += `<div class="bseas-ai-result bseas-markdown" id="bseas-stream-body" style="min-height:400px;overflow-y:auto;">${streamHtml}</div>`;
+                html += `<div class="bseas-ai-result bseas-markdown stretch" id="bseas-stream-body">${streamHtml}</div>`;
             } else if (bseas_disable_api) {
                 html += `<button class="bseas-ai-big-btn" id="bseas-copy-prompt-btn"><svg width="17" height="17" viewBox="0 0 24 24"><path fill="#ffffff" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg> 复制AI提示词</button>`;
                 if (!hasSubtitle) html += '<div class="bseas-empty" style="padding:40px 20px;">未获取到字幕，点击复制提示词进行舆情分析</div>';
@@ -3720,6 +4051,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 else if (adData.type === 'none') html += `<div class="bseas-sp-box status-none"><div class="bseas-sp-header"><span class="bseas-sp-icon">✓</span><span class="bseas-sp-title">未检测到视频植入广告</span></div></div>`;
                 else html += `<div class="bseas-sp-box status-err"><div class="bseas-sp-header"><span class="bseas-sp-icon">⚠</span><span class="bseas-sp-title">广告时间段格式解析异常</span></div></div>`;
                 const displaySummary = stripAdLine(cachedSummary);
+                if (!bseas_disable_api && bseas_api_key && isCachedSummaryStale(currentVideoKey)) {
+                    // 缓存结果由旧版本或旧设置生成，提示可点击重新生成（仅在可重新生成时提示）
+                    html += `<div class="bseas-stale-hint" id="bseas-stale-hint" title="当前版本或设置与缓存结果生成时不一致"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg><span>版本或设置变更，点击重新生成</span></div>`;
+                }
                 html += `<div style="position:relative;">${retryHtml}<div class="bseas-ai-result bseas-markdown" id="bseas-ai-result"></div></div>`;
                 if (cachedQA.length) html += cachedQA.map(qa => `<div class="bseas-qa-item"><div class="bseas-qa-q">${ASK_ICON_SVG}<span>${escapeHtml(qa.q)}</span></div><div class="bseas-qa-a bseas-markdown bseas-qa-md"></div></div>`).join('');
                 if (isGeneratingAI && currentFollowupQ) {
@@ -3734,7 +4069,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         safeSetInnerHTML(el, html);
         const aiResultEl = el.querySelector('#bseas-ai-result');
-        if (aiResultEl) renderMarkdownInto(aiResultEl, stripAdLine(cachedSummary || ''));
+        if (aiResultEl) renderAISummaryInto(aiResultEl, stripAdLine(cachedSummary || ''));
         el.querySelectorAll('.bseas-qa-md').forEach((qaEl, i) => { if (cachedQA[i]) renderMarkdownInto(qaEl, cachedQA[i].a); });
         document.getElementById('bseas-copy-prompt-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -3769,7 +4104,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             const retryBtn = document.getElementById('bseas-retry-btn');
             if (genBtn) genBtn.disabled = true;
             if (retryBtn) retryBtn.disabled = true;
-            safeSetInnerHTML(el, `<div class="bseas-ai-result bseas-markdown" id="bseas-stream-body" style="min-height:400px;overflow-y:auto;"><div class="bseas-loading"><div class="bseas-spinner"></div><div>生成中...</div></div></div>`);
+            safeSetInnerHTML(el, `<div class="bseas-ai-result bseas-markdown stretch" id="bseas-stream-body"><div class="bseas-loading"><div class="bseas-spinner"></div><div>生成中...</div></div></div>`);
             const streamEl = document.getElementById('bseas-stream-body');
             let success = false;
             try {
@@ -3797,6 +4132,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         document.getElementById('bseas-generate-btn')?.addEventListener('click', doGenerate);
         document.getElementById('bseas-retry-btn')?.addEventListener('click', doGenerate);
+        document.getElementById('bseas-stale-hint')?.addEventListener('click', doGenerate);
         document.getElementById('bseas-raw-toggle')?.addEventListener('change', e => {
             const oldToggle = document.getElementById('bseas-raw-toggle');
             const oldRect = oldToggle ? oldToggle.getBoundingClientRect() : null;
@@ -4024,18 +4360,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             <div class="bseas-settings-card">
                 <div class="bseas-settings-row inline">
                     <div class="bseas-settings-row-content">
-                        <div class="bseas-settings-row-label">省 Tokens 模式（不推荐）</div>
-                        <div class="bseas-settings-row-desc">通过压缩提示词、提前检测常见广告、压缩结果实现，将降低生成质量和广告识别精度，不建议开启</div>
-                    </div>
-                    <div class="bseas-settings-row-action">
-                        <label class="bseas-toggle">
-                            <input type="checkbox" id="bseas-s-save-tokens" ${bseas_save_tokens ? 'checked' : ''}>
-                            <span class="bseas-toggle-slider"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="bseas-settings-row inline">
-                    <div class="bseas-settings-row-content">
                         <div class="bseas-settings-row-label">AI 总结详细程度</div>
                     </div>
                     <div class="bseas-settings-row-action">
@@ -4075,7 +4399,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 <div class="bseas-settings-row">
                     <label class="bseas-settings-stack-label">获取评论数上限</label>
                     <input type="number" class="bseas-settings-input" id="bseas-s-opinion-count" value="${bseas_opinion_comments_count}" min="0" max="100">
-                    <div class="bseas-settings-hint">获取的评论数可能会小于但不会超过此限制</div>
+                    <div class="bseas-settings-hint">获取的评论数可能会小于但不会超过此限制；数量太少时视为无参考价值，不进行舆论分析。</div>
                 </div>
             </div>
         </section>
@@ -4192,72 +4516,19 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             toggleConfirmThreshold(confirmEnableCheckbox.checked);
             confirmEnableCheckbox.addEventListener('change', () => toggleConfirmThreshold(confirmEnableCheckbox.checked));
         }
-        const saveTokensCheckbox = document.getElementById('bseas-s-save-tokens');
-        const detailSelect = document.getElementById('bseas-s-detail');
         const opinionCountInput = document.getElementById('bseas-s-opinion-count');
         // 舆论分析开关
         const opinionCheckbox = document.getElementById('bseas-s-opinion');
-        function opinionCountShouldBeDisabled() {
-            const saveTokensOn = saveTokensCheckbox && saveTokensCheckbox.checked;
-            const opinionOff = !opinionCheckbox || !opinionCheckbox.checked;
-            return saveTokensOn || opinionOff;
-        }
-        function opinionCountDisabledReason() {
-            const saveTokensOn = saveTokensCheckbox && saveTokensCheckbox.checked;
-            const opinionOff = !opinionCheckbox || !opinionCheckbox.checked;
-            if (saveTokensOn) return '此选项在「省 Tokens 模式」启用时不可用';
-            if (opinionOff) return '此选项在「舆论分析」未启用时不可用';
-            return '';
-        }
         function applyOpinionCountDisabled() {
             if (!opinionCountInput) return;
-            const disabled = opinionCountShouldBeDisabled();
-            opinionCountInput.disabled = disabled;
-            if (disabled) { opinionCountInput.classList.add('disabled-setting'); opinionCountInput.title = opinionCountDisabledReason(); }
+            const opinionOff = !opinionCheckbox || !opinionCheckbox.checked;
+            opinionCountInput.disabled = opinionOff;
+            if (opinionOff) { opinionCountInput.classList.add('disabled-setting'); opinionCountInput.title = '此选项在「舆论分析」未启用时不可用'; }
             else { opinionCountInput.classList.remove('disabled-setting'); opinionCountInput.title = ''; }
         }
-        function toggleDetailForSaveTokens(saveTokens) {
-            if (saveTokens) {
-                if (detailSelect && !detailSelect.disabled) {
-                    bseas_detail_level = detailSelect.value;
-                }
-                if (opinionCountInput && !opinionCountInput.disabled) {
-                    bseas_opinion_comments_count = parseInt(opinionCountInput.value) || 30;
-                }
-            }
-            if (detailSelect) {
-                if (saveTokens) {
-                    detailSelect.value = 'minimal';
-                    detailSelect.disabled = true;
-                    detailSelect.classList.add('disabled-setting');
-                    detailSelect.title = '此选项在「省 Tokens 模式」启用时不可用';
-                } else {
-                    detailSelect.value = bseas_detail_level;
-                    detailSelect.disabled = false;
-                    detailSelect.classList.remove('disabled-setting');
-                    detailSelect.title = '';
-                }
-            }
-            if (opinionCountInput) {
-                if (saveTokens) {
-                    opinionCountInput.value = 10;
-                    opinionCountInput.disabled = true;
-                    opinionCountInput.classList.add('disabled-setting');
-                    opinionCountInput.title = '此选项在「省 Tokens 模式」启用时不可用';
-                } else {
-                    opinionCountInput.value = bseas_opinion_comments_count;
-                    applyOpinionCountDisabled();
-                }
-            }
-        }
-        if (saveTokensCheckbox) {
-            toggleDetailForSaveTokens(saveTokensCheckbox.checked);
-            saveTokensCheckbox.addEventListener('change', () => toggleDetailForSaveTokens(saveTokensCheckbox.checked));
-        }
+        applyOpinionCountDisabled();
         if (opinionCheckbox) {
-            opinionCheckbox.addEventListener('change', () => {
-                if (!saveTokensCheckbox || !saveTokensCheckbox.checked) applyOpinionCountDisabled();
-            });
+            opinionCheckbox.addEventListener('change', () => { applyOpinionCountDisabled(); });
         }
         pSelect.addEventListener('change', () => {
             const currentKeyInput = document.getElementById('bseas-s-key');
@@ -4324,7 +4595,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         log('B站字幕获取、AI分析及广告跳过工具 v' + SCRIPT_VERSION + ' 已加载。作者：LiuMashiro');
         aiSummaryCache = loadCache();
         createUI();
-        startFollowCheck();
         setTimeout(() => { fetchAllSubtitles(); initAdSkipMonitor(); }, AUTO_FETCH_DELAY_MS);
         setTimeout(() => { if (bseas_update_mode !== 'disabled') checkForUpdates(); checkStorageSize(); }, 5000);
     }
@@ -4375,6 +4645,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             clearCorrectedSubtitle,
             buildFullPrompt,
             getAISummaryPrompt,
+            extractOpinionChart,
+            parseOpinionChartValues,
+            buildOpinionChartHtml,
+            MIN_OPINION_COMMENTS,
         };
     }
 })();
