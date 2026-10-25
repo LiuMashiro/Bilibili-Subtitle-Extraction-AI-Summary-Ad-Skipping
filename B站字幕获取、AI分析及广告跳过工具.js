@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.5.0
+// @version      2.6.0
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,7 +39,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.5.0';
+    const SCRIPT_VERSION = '2.6.0';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -48,6 +48,14 @@
     const AD_MARK_COLOR = 'rgba(255, 193, 7, 0.6)';
     const AD_CHECK_INTERVAL_MS = 2000;
     const AUTO_FETCH_DELAY_MS = 1500;
+    // 浏览页字幕列表每批渲染条数：滚动到底时自动追加下一批
+    const PREVIEW_BATCH_SIZE = 100;
+    const PREVIEW_AUTO_LOAD_THRESHOLD_PX = 240;
+    // 字幕获取瞬时失败时的自动重试参数
+    const SUBTITLE_FETCH_MAX_RETRIES = 3;
+    const SUBTITLE_FETCH_RETRY_DELAY_MS = 2500;
+    // 广告关键词匹配：含空格的关键词按空格拆分为多个 token，任一命中即匹配，合并为一次正则扫描
+    const AD_KEYWORD_RE = new RegExp(AD_KEYWORD_LIST.flatMap(k => k.split(/\s+/).filter(Boolean)).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'));
 
     const API_PLATFORMS = {
         deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1/chat/completions', models: ['deepseek-v4-flash', 'deepseek-v4-pro', '自定义'], link: 'https://platform.deepseek.com/' },
@@ -88,6 +96,7 @@
             }
         }
         if (GM_getValue('bseas_save_tokens', undefined) !== undefined) GM_deleteValue('bseas_save_tokens');
+        if (GM_getValue('bseas_max_preview_subtitles', undefined) !== undefined) GM_deleteValue('bseas_max_preview_subtitles');
     }
 
     let bseas_platform = GM_getValue('bseas_platform', 'deepseek');
@@ -103,8 +112,6 @@
     let bseas_auto_skip_ad = GM_getValue('bseas_auto_skip_ad', true);
     let bseas_disable_api = GM_getValue('bseas_disable_api', false);
     let bseas_panel_pos_preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
-    let bseas_max_preview_subtitles = GM_getValue('bseas_max_preview_subtitles', 600);
-    if (bseas_max_preview_subtitles === 200) { bseas_max_preview_subtitles = 600; GM_setValue('bseas_max_preview_subtitles', 600); }
     let bseas_confirm_chars = GM_getValue('bseas_confirm_chars', 20000);
     let bseas_confirm_enabled = GM_getValue('bseas_confirm_enabled', true);
     let bseas_ai_evaluation = GM_getValue('bseas_ai_evaluation', false);
@@ -321,6 +328,10 @@ ${d.overviewWord}概括视频核心主题。
         if (!el) return;
         el.innerHTML = trustedPolicy ? trustedPolicy.createHTML(html) : html;
     }
+    function safeInsertAdjacentHTML(el, position, html) {
+        if (!el) return;
+        el.insertAdjacentHTML(position, trustedPolicy ? trustedPolicy.createHTML(html) : html);
+    }
     function escapeHtml(t) {
         if (t == null) return '';
         return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -331,9 +342,11 @@ ${d.overviewWord}概括视频核心主题。
         if (katexCSSInjected) return;
         try { const css = GM_getResourceText('KATEX_CSS'); if (css) { GM_addStyle(css); katexCSSInjected = true; } } catch (e) {}
     }
-    function renderLatex(el) {
+    function renderLatex(el, sourceText) {
         if (!el) return;
         if (typeof window.renderMathInElement !== 'function') return;
+        // 文本中不含任何公式定界符时无需遍历 DOM，直接跳过
+        if (typeof sourceText === 'string' && !sourceText.includes('$') && !sourceText.includes('\\(') && !sourceText.includes('\\[')) return;
         injectKatexCSS();
         try {
             window.renderMathInElement(el, {
@@ -353,7 +366,7 @@ ${d.overviewWord}概括视频核心主题。
     GM_addStyle(`
         :root {
             --bseas-primary: #00AEEC; --bseas-primary-hover: #0098ce;
-            --bseas-bg-glass: rgba(255,255,255,0.98); --bseas-bg-card: #f8fafc;
+            --bseas-bg-glass: #ffffff; --bseas-bg-card: #f8fafc;
             --bseas-border: #e2e8f0; --bseas-text: #0f172a; --bseas-text-dim: #64748b; --bseas-text-muted: #94a3b8;
             --bseas-shadow: 0 12px 40px -10px rgba(0,0,0,0.12), 0 4px 16px -4px rgba(0,0,0,0.06);
             --bseas-radius-lg: 20px; --bseas-radius-md: 14px; --bseas-radius-sm: 10px;
@@ -365,7 +378,7 @@ ${d.overviewWord}概括视频核心主题。
             --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
             --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
         }
-        * { font-family: -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif !important; }
+        .bseas-container, .bseas-container *, .bseas-toast, .bseas-edit-overlay, .bseas-edit-overlay *, .bseas-play-toast, .bseas-play-toast *, .bseas-play-ctrl, .bseas-play-ctrl *, .bseas-play-preview, .bseas-play-preview * { font-family: -apple-system,BlinkMacSystemFont,"Microsoft YaHei",sans-serif !important; }
         .bseas-container { position:fixed; z-index:100010; }
         .bseas-trigger-btn {
             width: 60px; height: 60px;
@@ -396,7 +409,6 @@ ${d.overviewWord}概括视频核心主题。
         }
         .bseas-trigger-btn:active { transform: scale(0.94); }
         .bseas-trigger-btn svg { width:26px; height:26px; fill: var(--bseas-primary); transition: transform 0.55s var(--ease-spring), fill 0.3s; pointer-events:none; filter: drop-shadow(0 1px 2px rgba(0,174,236,0.25)); }
-        .bseas-trigger-btn.on-dark svg { fill:#fff; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3)); }
         .bseas-trigger-btn:hover svg { transform: scale(1.15); }
         .bseas-trigger-btn::after {
             content:''; position:absolute; inset:-2px; border-radius:22px;
@@ -425,7 +437,7 @@ ${d.overviewWord}概括视频核心主题。
         @keyframes bseas-panel-out { 0%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0;transform:translateY(-10px) scale(0.95)} }
         @keyframes bseas-tab-in-right { from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none} }
         @keyframes bseas-tab-in-left { from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none} }
-        .bseas-panel { position:absolute; width:min(430px, calc(100vw - 40px)); height:min(calc(100vh - 120px),66vh); background:var(--bseas-bg-glass); backdrop-filter:blur(24px); border-radius:var(--bseas-radius-lg); box-shadow:var(--bseas-shadow); border:1px solid rgba(255,255,255,0.4); display:none; flex-direction:column; overflow:hidden; left:0; animation:bseas-panel-in 0.28s var(--ease-spring); transition:top 0.4s var(--ease-spring), bottom 0.4s var(--ease-spring); }
+        .bseas-panel { position:absolute; width:min(430px, calc(100vw - 40px)); height:min(calc(100vh - 120px),66vh); background:var(--bseas-bg-glass); border-radius:var(--bseas-radius-lg); box-shadow:var(--bseas-shadow); border:1px solid rgba(255,255,255,0.4); display:none; flex-direction:column; overflow:hidden; left:0; animation:bseas-panel-in 0.28s var(--ease-spring); transition:top 0.4s var(--ease-spring), bottom 0.4s var(--ease-spring); }
         .bseas-panel.show { display:flex; }
         .bseas-panel.hiding { animation:bseas-panel-out 0.22s var(--ease-standard) forwards; }
         .bseas-panel.no-transition { transition:none !important; }
@@ -626,7 +638,7 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-api-warning-btn:hover { background:#e0a800; transform:translateY(-1px); }
         .bseas-api-warning-btn:active { transform:translateY(0); }
         .bseas-source-section { border-bottom:1px solid var(--bseas-border); flex-shrink:0; }
-        .bseas-sticky-top { position:sticky; top:0; z-index:20; flex-shrink:0; margin:0 -22px; background:rgba(255,255,255,0.6); backdrop-filter:blur(24px) saturate(180%); -webkit-backdrop-filter:blur(24px) saturate(180%); border-bottom:1px solid var(--bseas-border); }
+        .bseas-sticky-top { position:sticky; top:0; z-index:20; flex-shrink:0; margin:0 -22px; background:rgba(255,255,255,0.6); backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px); border-bottom:1px solid var(--bseas-border); }
         .bseas-source-header { display:flex; align-items:center; justify-content:space-between; padding:7px 22px; cursor:pointer; user-select:none; transition:background 0.2s; }
         .bseas-source-header:hover { background:rgba(0,0,0,0.02); }
         .bseas-source-label { font-size:13px; font-weight:600; color:var(--bseas-text-dim); }
@@ -713,6 +725,9 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-subtitle-item:hover .bseas-ts { background:var(--bseas-primary); color:white; }
         .bseas-st { font-size:14.5px; color:var(--bseas-text); line-height:1.6; }
         .bseas-st mark { background:rgba(255,235,59,0.5); color:inherit; border-radius:2px; padding:0; margin:0; }
+        .bseas-list-footer { text-align:center; padding:14px; font-size:13px; }
+        .bseas-footer-action { color:#00a1d6; text-decoration:underline; cursor:pointer; }
+        .bseas-list-end { color:var(--bseas-text-muted); font-size:12px; padding:6px 0; }
         .bseas-ai-big-btn { width:100%; padding:14px; background:var(--bseas-primary); color:white; border:none; border-radius:var(--bseas-radius-md); font-size:15px; font-weight:600; cursor:pointer; margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 4px 16px rgba(0,174,236,0.25); position:relative; overflow:hidden; }
         .bseas-ai-big-btn::before { content:''; position:absolute; top:0; left:-100%; width:100%; height:100%; background:linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent); transition:left 0.5s ease; }
         .bseas-ai-big-btn:hover:not(:disabled) { background:var(--bseas-primary-hover); transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,174,236,0.35); }
@@ -845,13 +860,13 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-footer {
             padding:14px 22px 18px;
             background: rgba(255,255,255,0.72);
-            backdrop-filter: blur(24px) saturate(180%);
-            -webkit-backdrop-filter: blur(24px) saturate(180%);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
             border-top: 0.5px solid var(--bseas-border);
             display:flex; gap:10px; flex-direction:column;
             position:absolute; left:0; right:0; bottom:0; z-index:6;
         }
-        .bseas-btn { flex:1; min-width:0; padding:12px 8px; border:0.5px solid var(--bseas-border); border-radius:var(--bseas-radius-md); font-size:13.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); position:relative; overflow:hidden; backdrop-filter:blur(8px) saturate(140%); -webkit-backdrop-filter:blur(8px) saturate(140%); }
+        .bseas-btn { flex:1; min-width:0; padding:12px 8px; border:0.5px solid var(--bseas-border); border-radius:var(--bseas-radius-md); font-size:13.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); position:relative; overflow:hidden; }
         .bseas-btn svg { width:15px; height:15px; fill:currentColor; flex-shrink:0; }
         #bseas-play-btn svg { width:19px; height:19px; }
         #bseas-download-btn svg { width:17px; height:17px; }
@@ -920,6 +935,9 @@ ${d.overviewWord}概括视频核心主题。
     let sourceCollapsed = true;
     let currentVideoKey = null;
     let currentAid = null;
+    // 字幕拉取重试：仅对网络/接口异常等瞬时失败自动重试，确实无字幕不重试
+    let subtitleFetchRetries = 0;
+    let subtitleFetchMayRetry = false;
     let hotComments = [];
     let videoPartsInfo = [];
     let allPartsSubtitlesCache = null;
@@ -946,7 +964,13 @@ ${d.overviewWord}概括视频核心主题。
     let currentGMXHR = null;
     let subtitleSearchKeyword = '';
     let expandedSearch = false;
-    let currentPreviewLimit = 0;
+    // 浏览页列表当前已渲染条数（按 PREVIEW_BATCH_SIZE 分批增量追加）
+    let previewRenderedCount = 0;
+    let _previewChunking = false;
+    // 渲染代次：全量重建时递增，用于中止持有过期数据的分帧追加链
+    let _previewRenderEpoch = 0;
+    // 已渲染条数对应的字幕数据引用：仅同一数据重新渲染（如切换标签页）时保留进度
+    let _previewRenderedBody = null;
     let _documentClickHandler = null;
     let _resizeDocHandlers = null;
     let _dragDocHandlers = [];
@@ -961,9 +985,10 @@ ${d.overviewWord}概括视频核心主题。
         const result = {};
         for (const key of Object.keys(raw)) {
             const val = raw[key];
-            if (typeof val === 'string') result[key] = { prompt: '', summary: val, qa: [], ts: 0 };
+            // sig 必须随条目一起保留：丢失会导致每次刷新后都被误判为“版本或设置变更”
+            if (typeof val === 'string') result[key] = { prompt: '', summary: val, qa: [], ts: 0, sig: '' };
             else if (val && typeof val === 'object' && typeof val.summary === 'string') {
-                result[key] = { prompt: typeof val.prompt === 'string' ? val.prompt : '', summary: val.summary, qa: Array.isArray(val.qa) ? val.qa : [], ts: typeof val.ts === 'number' ? val.ts : 0 };
+                result[key] = { prompt: typeof val.prompt === 'string' ? val.prompt : '', summary: val.summary, qa: Array.isArray(val.qa) ? val.qa : [], ts: typeof val.ts === 'number' ? val.ts : 0, sig: typeof val.sig === 'string' ? val.sig : '' };
             }
         }
         return result;
@@ -971,7 +996,8 @@ ${d.overviewWord}概括视频核心主题。
     function getCachedPrompt(videoKey) { const e = aiSummaryCache[videoKey]; return (!e || typeof e === 'string') ? null : (e.prompt || ''); }
     function getCachedSummary(videoKey) { const e = aiSummaryCache[videoKey]; if (!e) return null; return typeof e === 'string' ? e : (e.summary || null); }
     function getCachedQA(videoKey) { const e = aiSummaryCache[videoKey]; return (!e || typeof e === 'string') ? [] : (Array.isArray(e.qa) ? e.qa : []); }
-    // 影响 AI 返回内容的设置项签名：版本或任一设置变化即视为缓存结果已过时
+    // 影响 AI 返回内容的设置项签名：版本或任一设置变化即视为缓存结果已过时。
+    // 仅纳入真正进入提示词或影响输出内容的项；广告自动跳过、禁用 API 等行为开关不改变输出，纳入会引发误报
     function aiOutputSignature() {
         return [
             SCRIPT_VERSION,
@@ -979,15 +1005,15 @@ ${d.overviewWord}概括视频核心主题。
             'opinion:' + (bseas_opinion_analysis ? 1 : 0),
             'opinionCount:' + bseas_opinion_comments_count,
             'aiEval:' + (bseas_ai_evaluation ? 1 : 0),
-            'skipAd:' + (bseas_auto_skip_ad ? 1 : 0),
-            'disableApi:' + (bseas_disable_api ? 1 : 0),
             'model:' + bseas_platform + '/' + bseas_model
         ].join('|');
     }
     function isCachedSummaryStale(videoKey) {
         const e = aiSummaryCache[videoKey];
         if (!e || typeof e === 'string') return false;
-        return (e.sig || '') !== aiOutputSignature();
+        // 无 sig 的条目为远古格式迁移而来，无从判定，不提示以免误报
+        if (!e.sig) return false;
+        return e.sig !== aiOutputSignature();
     }
     function setCachedSummary(videoKey, prompt, summary) {
         const existing = aiSummaryCache[videoKey];
@@ -1161,11 +1187,13 @@ ${d.overviewWord}概括视频核心主题。
         if (compareVersions(chosen.version, SCRIPT_VERSION) > 0) {
             latestVersion = chosen.version; updateLinkUrl = chosen.url; hasUpdate = true;
             log(`发现新版本(${chosen.source}):`, latestVersion);
-            if (bseas_update_mode === 'reduced' && shouldShowUpdateReminder(bseas_update_mode, bseas_update_last_prompt_ts, Date.now(), latestVersion, SCRIPT_VERSION, 'panel')) {
+            // 先展示徽章再记录冷却时间：徽章内部会用同一函数复查，若先更新计时会导致复查必然失败
+            const remindDue = bseas_update_mode === 'reduced' && shouldShowUpdateReminder(bseas_update_mode, bseas_update_last_prompt_ts, Date.now(), latestVersion, SCRIPT_VERSION, 'panel');
+            showUpdateBadgeInPanel();
+            if (remindDue) {
                 bseas_update_last_prompt_ts = Date.now();
                 GM_setValue('bseas_update_last_prompt_ts', bseas_update_last_prompt_ts);
             }
-            showUpdateBadgeInPanel();
         } else { log(`当前已是最新版本(${chosen.source}):`, SCRIPT_VERSION); }
     }
     const UPDATE_REMINDER_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1300,7 +1328,9 @@ ${d.overviewWord}概括视频核心主题。
             waitForElement('.bpx-player-progress-area', (progressArea) => {
                 createProgressMark(video, progressArea);
                 if (progressMarkObserver) progressMarkObserver.disconnect();
-                progressMarkObserver = new MutationObserver(() => {
+                progressMarkObserver = new MutationObserver((mutations) => {
+                    // 仅在出现节点新增时查询，避免为纯移除/属性变动触发全量查询
+                    if (!mutations.some(m => m.addedNodes && m.addedNodes.length)) return;
                     const newVideo = document.querySelector('.bpx-player-video-wrap video');
                     if (newVideo && newVideo !== video) {
                         progressMarkInitialized = false;
@@ -1410,7 +1440,7 @@ ${d.overviewWord}概括视频核心主题。
         if (!el) return;
         const parsed = extractOpinionChart(md);
         safeSetInnerHTML(el, markdownToHtml(parsed.text));
-        renderLatex(el);
+        renderLatex(el, parsed.text);
         // 仅在 AI 确实输出过舆论图行但格式非法时提示错误；从未请求/旧版本缓存不提示
         if (parsed.status !== 'ok' && !parsed.had) return;
         const slot = el.querySelector('.bseas-opinion-chart-slot');
@@ -1570,10 +1600,11 @@ ${d.overviewWord}概括视频核心主题。
         const bvid = (url.match(/(BV[\w]+)/) || [])[1];
         const page = parseInt((url.match(/[?&]p=(\d+)/) || [, 1])[1]);
         if (!bvid) return [];
+        subtitleFetchMayRetry = false;
         try {
             const vr = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, { credentials: 'include' });
             const vd = await vr.json();
-            if (vd.code !== 0 || !vd.data) return [];
+            if (vd.code !== 0 || !vd.data) { subtitleFetchMayRetry = true; return []; }
             const aid = vd.data.aid, pages = vd.data.pages || [];
             let cid = vd.data.cid;
             if (pages.length >= page) cid = pages[page - 1].cid;
@@ -1581,7 +1612,9 @@ ${d.overviewWord}概括视频核心主题。
             videoPartsInfo = pages.map((p, i) => ({ page: p.page || i + 1, cid: p.cid, part: p.part || '' }));
             const pr = await fetch(`https://api.bilibili.com/x/player/wbi/v2?aid=${aid}&cid=${cid}`, { credentials: 'include' });
             const pd = await pr.json();
-            if (pd.code !== 0 || !pd.data?.subtitle?.subtitles) return [];
+            if (pd.code !== 0) { subtitleFetchMayRetry = true; return []; }
+            // 接口正常但无字幕字段属于确实无字幕，不计入可重试
+            if (!pd.data?.subtitle?.subtitles) return [];
             const subs = pd.data.subtitle.subtitles.map((s, i) => ({
                 id: s.id || i, lan: s.lan, lan_doc: s.lan_doc, subtitle_url: s.subtitle_url,
                 isAI: s.lan.startsWith('ai-'), body: null
@@ -1601,7 +1634,7 @@ ${d.overviewWord}概括视频核心主题。
             const r = await fetch(url);
             const d = await r.json();
             return d.body || [];
-        } catch (e) { return []; }
+        } catch (e) { subtitleFetchMayRetry = true; return []; }
     }
     async function fetchAllPartsSubtitles() {
         if (!currentAid || videoPartsInfo.length === 0) return [];
@@ -1907,7 +1940,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 if (fresh) targetEl = fresh; else return;
             } else if (!document.body.contains(targetEl)) return;
             safeSetInnerHTML(targetEl, markdownToHtml(text));
-            renderLatex(targetEl);
+            renderLatex(targetEl, text);
             if (autoScroll) targetEl.scrollTop = targetEl.scrollHeight;
         }
         function flush() {
@@ -2014,7 +2047,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         allSubtitles = []; currentSubtitleData = null; selectedSubtitleId = null;
         videoPartsInfo = []; allPartsSubtitlesCache = null;
         adSegments = []; hasJumpedAds = {}; lastAdCheckResult = null; adDetectionNotified = false;
-        progressMarkInitialized = false; hotComments = []; subtitleSearchKeyword = ''; currentPreviewLimit = 0; expandedSearch = false;
+        progressMarkInitialized = false; hotComments = []; subtitleSearchKeyword = ''; previewRenderedCount = 0; expandedSearch = false;
         aiConversationHistory = [];
         const existingMark = document.getElementById('bseas-ad-progress-mark');
         if (existingMark) existingMark.remove();
@@ -2025,9 +2058,18 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             const commentPromise = bseas_opinion_analysis ? fetchHotComments() : Promise.resolve([]);
             if (allSubtitles.length > 0) await loadSubtitle(allSubtitles[0]);
             hotComments = await commentPromise;
-        } catch (e) {}
+        } catch (e) { subtitleFetchMayRetry = true; }
         setLoadingState(false);
         updateUI(); updateContent();
+        maybeRetrySubtitleFetch();
+    }
+    // 瞬时失败（网络/接口异常）且未取到字幕时自动重试；确实无字幕不重试
+    function maybeRetrySubtitleFetch() {
+        if (currentSubtitleData?.body?.length || !subtitleFetchMayRetry) { subtitleFetchRetries = 0; return; }
+        if (subtitleFetchRetries >= SUBTITLE_FETCH_MAX_RETRIES) return;
+        subtitleFetchRetries++;
+        setLoadingState(true);
+        setTimeout(() => { if (currentVideoKey) fetchAllSubtitles(true); }, SUBTITLE_FETCH_RETRY_DELAY_MS);
     }
     function appendCorrectedSubtitleOption(lanDoc, method) {
         if (!currentVideoKey) return;
@@ -2052,7 +2094,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (selectedSubtitleId === sub.id && currentSubtitleData?.body?.length > 0) return;
         selectedSubtitleId = sub.id;
         subtitleSearchKeyword = '';
-        currentPreviewLimit = 0;
+        previewRenderedCount = 0;
         expandedSearch = false;
         if (autoGenerateTimer) { clearTimeout(autoGenerateTimer); autoGenerateTimer = null; }
         const afterLoad = () => {
@@ -2438,22 +2480,38 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     // ===================== 17. UI 创建与事件 =====================
     // 触发按钮配色刷新与窗口尺寸重定位只在首次加载时注册一次：createUI 会在保存设置后重建面板，
     // 若在此处注册会导致定时器与 resize 监听随重建次数累积
-    let triggerColorTimer = null;
+    let urlWatchTimer = null;
     let layoutResizeBound = false;
-    function startTriggerColorLoop() {
-        if (triggerColorTimer) return;
-        triggerColorTimer = setInterval(updateTriggerBtnColor, 3000);
+    // 触发按钮矩形缓存与失效监听：模块级单例，避免随面板重建重复绑定
+    let _triggerBtnRect = null;
+    let _triggerBtnRectInvalidationBound = false;
+    function bindTriggerBtnRectInvalidation() {
+        if (_triggerBtnRectInvalidationBound) return;
+        _triggerBtnRectInvalidationBound = true;
+        document.addEventListener('mouseup', () => { _triggerBtnRect = null; });
+        window.addEventListener('resize', () => { _triggerBtnRect = null; });
+    }
+    // URL 兜底检查：覆盖未走 history API 的导航场景
+    function startUrlWatchLoop() {
+        if (urlWatchTimer) return;
+        urlWatchTimer = setInterval(handleUrlChange, 3000);
     }
     function bindPanelResize() {
         if (layoutResizeBound) return;
         layoutResizeBound = true;
+        let resizeRafPending = false;
         window.addEventListener('resize', () => {
-            const container = document.querySelector('.bseas-container');
-            if (!container) return;
-            const panel = container.querySelector('.bseas-panel');
-            if (panel) panel.classList.add('no-transition');
-            applySavedPanelPosition(container);
-            if (panel) requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('no-transition')));
+            if (resizeRafPending) return;
+            resizeRafPending = true;
+            requestAnimationFrame(() => {
+                resizeRafPending = false;
+                const container = document.querySelector('.bseas-container');
+                if (!container) return;
+                const panel = container.querySelector('.bseas-panel');
+                if (panel) panel.classList.add('no-transition');
+                applySavedPanelPosition(container);
+                if (panel) requestAnimationFrame(() => requestAnimationFrame(() => panel.classList.remove('no-transition')));
+            });
         });
     }
     function createUI() {
@@ -2497,8 +2555,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         makeDraggable(c);
         makeResizable(c);
         bindEvents(c);
-        updateTriggerBtnColor();
-        startTriggerColorLoop();
+        bindTriggerBtnRectInvalidation();
+        startUrlWatchLoop();
         if (hasUpdate) showUpdateBadgeInPanel();
         bindPanelResize();
     }
@@ -2697,47 +2755,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         window.addEventListener('blur', onUp);
         _resizeDocHandlers = { move: onMove, up: onUp };
     }
-    function updateTriggerBtnColor() {
-        const btn = document.querySelector('.bseas-trigger-btn');
-        if (!btn) return;
-        const r = btn.getBoundingClientRect();
-        const cx = r.left + r.width / 2;
-        const cy = r.top + r.height / 2;
-        if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) { btn.classList.remove('on-dark'); return; }
-        const container = btn.closest('.bseas-container');
-        let el = null;
-        try {
-            if (container) container.style.pointerEvents = 'none';
-            el = document.elementFromPoint(cx, cy);
-        } finally {
-            if (container) container.style.pointerEvents = '';
-        }
-        if (!el) { btn.classList.remove('on-dark'); return; }
-        let bg = null;
-        let cur = el;
-        while (cur && cur !== document.documentElement) {
-            if (cur.classList && cur.classList.contains('bseas-edit-overlay')) { cur = cur.parentElement; continue; }
-            const s = getComputedStyle(cur);
-            const c = s.backgroundColor;
-            if (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') {
-                const tm = c.match(/rgba?\(([^)]+)\)/);
-                if (tm) {
-                    const tp = tm[1].split(',').map(p => parseFloat(p.trim()));
-                    const alpha = tp.length === 4 ? tp[3] : 1;
-                    if (alpha > 0.3) { bg = c; break; }
-                }
-            }
-            cur = cur.parentElement;
-        }
-        if (!bg) { btn.classList.remove('on-dark'); return; }
-        const m = bg.match(/rgba?\(([^)]+)\)/);
-        if (!m) { btn.classList.remove('on-dark'); return; }
-        const parts = m[1].split(',').map(p => parseFloat(p.trim()));
-        const [R, G, B] = parts;
-        const lum = (0.299 * R + 0.587 * G + 0.114 * B) / 255;
-        if (lum < 0.5) btn.classList.add('on-dark');
-        else btn.classList.remove('on-dark');
-    }
     function makeDraggable(container) {
         const handle = container.querySelector('.bseas-header-text');
         const triggerBtn = container.querySelector('.bseas-trigger-btn');
@@ -2750,6 +2767,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         _dragDocHandlers = [];
         function setupDrag(element, isTrigger) {
             let isDragging = false, isMouseDown = false, startX = 0, startY = 0, offsetX = 0, offsetY = 0, hasMoved = false;
+            let dragVW = 0, dragVH = 0, dragW = 0;
             element.addEventListener('mousedown', (e) => {
                 if (e.button !== 0) return;
                 if (!isTrigger && e.target.closest('button, a')) return;
@@ -2758,6 +2776,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 const rect = container.getBoundingClientRect();
                 startX = e.clientX; startY = e.clientY;
                 offsetX = e.clientX - rect.left; offsetY = e.clientY - rect.top;
+                // 拖拽边界量在按下时缓存，避免移动过程中反复读取布局
+                dragVW = document.documentElement.clientWidth;
+                dragVH = document.documentElement.clientHeight;
+                dragW = container.offsetWidth;
                 if (!isTrigger) e.preventDefault();
             });
             const onMouseMove = (e) => {
@@ -2775,8 +2797,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 }
                 if (isDragging) {
                     let x = e.clientX - offsetX, y = e.clientY - offsetY;
-                    x = Math.max(8, Math.min(document.documentElement.clientWidth - container.offsetWidth - 8, x));
-                    y = Math.max(8, Math.min(document.documentElement.clientHeight - 60, y));
+                    x = Math.max(8, Math.min(dragVW - dragW - 8, x));
+                    y = Math.max(8, Math.min(dragVH - 60, y));
                     container.style.left = x + 'px';
                     container.style.top = y + 'px';
                 }
@@ -2800,7 +2822,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     GM_setValue('bseas_panel_position', { side, dist, top: rect.top });
                     applySavedPanelPosition(container);
                     requestAnimationFrame(() => requestAnimationFrame(() => { panel.classList.remove('no-transition'); }));
-                    if (isTrigger) { element._wasDragged = true; updateTriggerBtnColor(); }
+                    if (isTrigger) element._wasDragged = true;
                 }
             };
             document.addEventListener('mousemove', onMouseMove);
@@ -2836,8 +2858,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const oc = document.getElementById('bseas-s-opinion-count');
         if (oc) bseas_opinion_comments_count = parseInt(oc.value) || 30;
         bseas_disable_api = chk('bseas-s-disable-api', bseas_disable_api);
+        const prevPosPreset = bseas_panel_pos_preset;
         bseas_panel_pos_preset = val('bseas-s-pos-preset', bseas_panel_pos_preset);
-        bseas_max_preview_subtitles = parseInt(val('bseas-s-max-preview', bseas_max_preview_subtitles)) || 600;
         bseas_confirm_enabled = chk('bseas-s-confirm-enable', bseas_confirm_enabled);
         bseas_confirm_chars = parseInt(val('bseas-s-confirm-chars', bseas_confirm_chars)) || 20000;
         bseas_ai_evaluation = chk('bseas-s-ai-evaluation', bseas_ai_evaluation);
@@ -2855,20 +2877,24 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         GM_setValue('bseas_disable_api', bseas_disable_api);
         GM_setValue('bseas_panel_pos_preset', bseas_panel_pos_preset);
         GM_setValue('bseas_opinion_comments_count', bseas_opinion_comments_count);
-        GM_setValue('bseas_max_preview_subtitles', bseas_max_preview_subtitles);
         GM_setValue('bseas_confirm_enabled', bseas_confirm_enabled);
         GM_setValue('bseas_confirm_chars', bseas_confirm_chars);
         GM_setValue('bseas_ai_evaluation', bseas_ai_evaluation);
         GM_setValue('bseas_update_mode', bseas_update_mode);
-        GM_deleteValue('bseas_panel_position');
+        // 仅当用户主动更改预设位置时才清除手动拖拽位置，避免保存其他设置丢失拖拽结果
+        if (bseas_panel_pos_preset !== prevPosPreset) GM_deleteValue('bseas_panel_position');
     }
     function bindEvents(c) {
         const panel = c.querySelector('.bseas-panel');
         const triggerBtn = c.querySelector('.bseas-trigger-btn');
         panel.addEventListener('click', e => e.stopPropagation());
         if (triggerBtn) {
+            // 按钮位置仅在悬停进入、拖拽或窗口尺寸变化时改变，缓存矩形避免每次移动鼠标读取布局
+            triggerBtn.addEventListener('mouseenter', () => { _triggerBtnRect = triggerBtn.getBoundingClientRect(); });
+            triggerBtn.addEventListener('mousedown', () => { _triggerBtnRect = null; });
             triggerBtn.addEventListener('mousemove', (e) => {
-                const r = triggerBtn.getBoundingClientRect();
+                if (!_triggerBtnRect) _triggerBtnRect = triggerBtn.getBoundingClientRect();
+                const r = _triggerBtnRect;
                 triggerBtn.style.setProperty('--bseas-mx', ((e.clientX - r.left) / r.width * 100) + '%');
                 triggerBtn.style.setProperty('--bseas-my', ((e.clientY - r.top) / r.height * 100) + '%');
             });
@@ -2933,6 +2959,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         c.querySelector('#bseas-download-btn').addEventListener('click', e => { e.stopPropagation(); openDownloadMenu(); });
         bindTabBackTopHint();
         bindFollowExitScroll();
+        bindPreviewAutoLoad();
         c.querySelector('#bseas-s-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); switchTab('preview'); });
         c.querySelector('#bseas-s-save')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -3067,6 +3094,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
 
     let playModeActive = false;
     let playToastEl = null;
+    let _playToastLastHtml = '';
     let playCtrlEl = null;
     let playTimeupdateHandler = null;
     let playSecondSubtitle = null;
@@ -3092,6 +3120,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     function togglePlayMode() {
         if (playModeActive) { stopPlayMode(); return; }
+        // 跟随中再次点击播放键 = 取消跟随（与“播放”互斥）
+        if (followModeActive) { stopFollowMode(); return; }
         if (!currentSubtitleData?.body?.length) { showToast('请先选择字幕', 'warning'); return; }
         const video = document.querySelector('#bilibili-player video') || document.querySelector('video');
         if (!video) { showToast('未找到视频元素', 'warning'); return; }
@@ -3271,6 +3301,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     function startPlayMode(video, firstSub) {
         playModeActive = true;
+        _playToastLastHtml = '';
         playVideoRef = video;
         const playBtn = document.getElementById('bseas-play-btn');
         if (playBtn) { playBtn.classList.remove('bseas-btn-secondary'); playBtn.classList.add('bseas-btn-primary'); }
@@ -3334,11 +3365,16 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             let html = '';
             if (line1) html += `<div class="bseas-play-line1">${escapeHtml(line1)}</div>`;
             if (line2) html += `<div class="bseas-play-line2">${escapeHtml(line2)}</div>`;
-            safeSetInnerHTML(playToastEl, html);
+            // 内容未变化时跳过 innerHTML 重写，减少timeupdate 周期内的无效 DOM 操作
+            if (html !== _playToastLastHtml) {
+                _playToastLastHtml = html;
+                safeSetInnerHTML(playToastEl, html);
+            }
         }
     }
     function stopPlayMode() {
         playModeActive = false;
+        _playToastLastHtml = '';
         const playBtn = document.getElementById('bseas-play-btn');
         if (playBtn) { playBtn.classList.remove('bseas-btn-primary'); playBtn.classList.add('bseas-btn-secondary'); }
         if (playVideoRef && playTimeupdateHandler) playVideoRef.removeEventListener('timeupdate', playTimeupdateHandler);
@@ -3355,13 +3391,25 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     let followTimeupdateHandler = null;
     let followVideoRef = null;
     let followLastIdx = -1;
-    let followScrollLockUntil = 0;
+    // 程序化滚动标记：跟随定位/自动翻页期间置位，滚动退出逻辑据此区分“脚本滚动”与“用户滚动”
+    let _followAutoScrolling = false;
+    let _followAutoScrollTimer = 0;
+    // 定位代次：分帧追加与 timeupdate 可能重叠，仅允许最新请求的位置生效
+    let _followScrollGen = 0;
+    let _followHighlightEl = null;
+    function beginFollowAutoScroll() {
+        _followAutoScrolling = true;
+        if (_followAutoScrollTimer) clearTimeout(_followAutoScrollTimer);
+        // 平滑滚动有上限时长，宽限后释放；期间新的定位会续期
+        _followAutoScrollTimer = setTimeout(() => { _followAutoScrolling = false; _followAutoScrollTimer = 0; }, 1500);
+    }
     // 跟随视频：作为「播放」的子功能，由播放弹窗选择后启动
     function startFollowMode(video) {
         if (followModeActive) stopFollowMode();
         followModeActive = true;
         followVideoRef = video;
         followLastIdx = -1;
+        _followScrollGen++;
         // 跟随需按全量字幕定位，搜索过滤会导致错行，开启时自动退出搜索
         if (subtitleSearchKeyword) { clearSubtitleSearchUI(); updatePreviewList(); }
         const playBtn = document.getElementById('bseas-play-btn');
@@ -3390,19 +3438,27 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         if (idx === -1) idx = 0;
         if (idx === followLastIdx) return;
         followLastIdx = idx;
-        const limit = currentPreviewLimit > 0 ? currentPreviewLimit : bseas_max_preview_subtitles;
-        if (idx >= limit) {
-            currentPreviewLimit = Math.ceil((idx + 1) / bseas_max_preview_subtitles) * bseas_max_preview_subtitles;
-            updatePreviewList();
-        }
-        const items = content.querySelectorAll('.bseas-subtitle-item');
-        const target = items[idx];
-        if (!target) return;
-        content.querySelectorAll('.bseas-subtitle-item.current-follow').forEach(el => el.classList.remove('current-follow'));
+        // 目标字幕尚未渲染时按批增量追加，渲染完成后再定位滚动
+        const gen = ++_followScrollGen;
+        // 从定位开始即标记程序化滚动：覆盖分帧追加期与随后的平滑滚动期，
+        // 避免触摸惯性残余滚动、滚动条拖动等落在追加窗口内被误判为用户滚动
+        beginFollowAutoScroll();
+        if (idx >= previewRenderedCount) ensurePreviewRendered(idx + 1, () => { if (gen === _followScrollGen) scrollFollowToItem(idx); });
+        else scrollFollowToItem(idx);
+    }
+    function scrollFollowToItem(idx) {
+        if (!followModeActive) return;
+        const content = document.querySelector('.bseas-content');
+        const target = document.querySelector('#bseas-subtitle-list-container')?.children[idx];
+        if (!content || !target) return;
+        // 高亮元素用引用跟踪，避免每次定位都全量扫描列表
+        if (_followHighlightEl && _followHighlightEl !== target) _followHighlightEl.classList.remove('current-follow');
+        _followHighlightEl = target;
         target.classList.add('current-follow');
         const targetTop = target.offsetTop;
         const targetH = target.clientHeight;
-        followScrollLockUntil = Date.now() + 900;
+        // 标记程序化滚动，避免自动翻页被退出逻辑判定为用户手动滚动
+        beginFollowAutoScroll();
         content.scrollTo({
             top: targetTop - content.clientHeight / 2 + targetH / 2,
             behavior: 'smooth'
@@ -3416,14 +3472,15 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         followVideoRef = null;
         followTimeupdateHandler = null;
         followLastIdx = -1;
-        document.querySelectorAll('.bseas-subtitle-item.current-follow').forEach(el => el.classList.remove('current-follow'));
+        if (_followAutoScrollTimer) { clearTimeout(_followAutoScrollTimer); _followAutoScrollTimer = 0; }
+        _followAutoScrolling = false;
+        if (_followHighlightEl) { _followHighlightEl.classList.remove('current-follow'); _followHighlightEl = null; }
     }
-    // 一键回顶：点击当前所在页标签即可回到顶部
+    // 一键回顶：点击当前所在页标签即可回到顶部（用户主动离开当前位置，退出跟随）
     function scrollContentToTop() {
         const content = document.querySelector('.bseas-content');
         if (!content) return;
-        // 回顶由用户主动触发：加锁避免被判定为跟随模式下的手动滚动而静默退出跟随
-        followScrollLockUntil = Date.now() + 900;
+        if (followModeActive) stopFollowMode();
         content.scrollTo({ top: 0, behavior: 'smooth' });
     }
     function updateTabBackTopHint() {
@@ -3454,7 +3511,23 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             if (['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key) || (e.key === ' ' && !e.repeat)) exitIfFollowing();
         });
         content.addEventListener('scroll', () => {
-            if (followModeActive && Date.now() > followScrollLockUntil) exitIfFollowing();
+            // 程序化滚动（自动翻页/定位）进行中不视为用户滚动
+            if (followModeActive && !_followAutoScrolling) exitIfFollowing();
+        }, { passive: true });
+    }
+    // 浏览页滚动到底自动加载下一批字幕：rAF 节流，被动监听，避免每帧重复判定
+    function bindPreviewAutoLoad() {
+        const content = document.querySelector('.bseas-content');
+        if (!content || content._bseasAutoLoadBound) return;
+        content._bseasAutoLoadBound = true;
+        let scrollRafPending = false;
+        content.addEventListener('scroll', () => {
+            if (scrollRafPending) return;
+            scrollRafPending = true;
+            requestAnimationFrame(() => {
+                scrollRafPending = false;
+                maybeAutoLoadPreview();
+            });
         }, { passive: true });
     }
 
@@ -3490,7 +3563,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     function subtitleContainsAdKeyword() {
         if (!currentSubtitleData?.body) return false;
         const text = currentSubtitleData.body.map(it => it.content).join('\n');
-        return AD_KEYWORD_LIST.some(keyword => keyword.split(/\s+/).filter(Boolean).some(tok => text.includes(tok)));
+        return AD_KEYWORD_RE.test(text);
     }
 
     // ===================== 19. UI 状态更新 =====================
@@ -3819,56 +3892,181 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         return html;
     }
+    // 归一化（半角化）内容缓存：搜索过滤与高亮复用同一份结果，避免每次渲染重复正则处理
+    const _normContentCache = new WeakMap();
+    function getNormalizedContent(item) {
+        let v = _normContentCache.get(item);
+        if (v === undefined) { v = toHalfWidth(item.content); _normContentCache.set(item, v); }
+        return v;
+    }
     function filterSubtitles(body, forceMode) {
         if (!subtitleSearchKeyword) return body;
         const useExpanded = forceMode ? forceMode === 'expanded' : expandedSearch;
         if (!useExpanded) {
             const keywords = subtitleSearchKeyword.split(/\s+/).filter(Boolean).map(kw => toHalfWidth(kw).toLowerCase());
             if (keywords.length === 0) return body;
-            let source = body.filter(it => !it.content.includes('\u266a') && !it.content.includes('\u266b'));
-            return source.filter(it => {
-                const content = toHalfWidth(it.content).toLowerCase();
+            return body.filter(it => {
+                if (it.content.includes('\u266a') || it.content.includes('\u266b')) return false;
+                const content = getNormalizedContent(it).toLowerCase();
                 return keywords.every(kw => content.includes(kw));
             });
         }
         const tokens = tokenizeExpanded(subtitleSearchKeyword);
         if (tokens.length === 0) return body;
         return body.filter(it => {
-            const content = toHalfWidth(it.content).toLowerCase();
+            const content = getNormalizedContent(it).toLowerCase();
             return tokens.some(token => isExpandedTokenMatch(content, it, token));
         });
     }
-    function buildSubtitleListHtml(filtered) {
-        const limit = currentPreviewLimit > 0 ? currentPreviewLimit : bseas_max_preview_subtitles;
-        const jumpBtnHtml = it => subtitleSearchKeyword
-            ? `<button class="bseas-jump-btn" data-time="${escapeHtml(it.from)}" title="取消搜索并跳转到此处"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></button>`
-            : '';
-        const listHtml = filtered.slice(0, limit).map(it => `<div class="bseas-subtitle-item" data-time="${escapeHtml(it.from)}">${jumpBtnHtml(it)}<div class="bseas-ts">${highlightTime(it, subtitleSearchKeyword)}</div><div class="bseas-st">${highlightKeyword(it.content, subtitleSearchKeyword)}</div></div>`).join('');
-        let footer = '';
-        if (filtered.length > limit) {
-            footer = `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-load-more" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">继续加载</span></div>`;
-        } else if (subtitleSearchKeyword && filtered.length === 0) {
-            footer = '<div class="bseas-empty">未匹配到字幕</div>';
+    // 普通搜索高亮器每次渲染只编译一次，避免逐条字幕重复构建正则
+    function compileKeywordHighlighter(keyword) {
+        const keywords = keyword.split(/\s+/).filter(Boolean).map(kw => toHalfWidth(kw).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        if (keywords.length === 0) return null;
+        const re = new RegExp(keywords.join('|'), 'gi');
+        return (normalizedText) => escapeHtml(normalizedText.replace(re, m => `\x00${m}\x01`)).replace(/\x00/g, '<mark>').replace(/\x01/g, '</mark>');
+    }
+    function buildSubtitleItemsHtml(items) {
+        const searching = !!subtitleSearchKeyword;
+        const highlighter = searching && !expandedSearch ? compileKeywordHighlighter(subtitleSearchKeyword) : null;
+        return items.map(it => {
+            const jumpBtn = searching
+                ? `<button class="bseas-jump-btn" data-time="${escapeHtml(it.from)}" title="取消搜索并跳转到此处"><svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></button>`
+                : '';
+            const stHtml = highlighter ? highlighter(getNormalizedContent(it)) : highlightKeyword(it.content, subtitleSearchKeyword);
+            return `<div class="bseas-subtitle-item" data-time="${escapeHtml(it.from)}">${jumpBtn}<div class="bseas-ts">${highlightTime(it, subtitleSearchKeyword)}</div><div class="bseas-st">${stHtml}</div></div>`;
+        }).join('');
+    }
+    function getPreviewFilteredList() {
+        return filterSubtitles(currentSubtitleData?.body || []);
+    }
+    function updatePreviewSearchMeta(filtered) {
+        const el = document.querySelector('.bseas-content');
+        if (!el) return;
+        const countEl = el.querySelector('.bseas-search-count');
+        if (countEl) countEl.textContent = subtitleSearchKeyword ? `${filtered.length} 条` : '';
+        const clearBtn = el.querySelector('#bseas-search-clear');
+        if (clearBtn) clearBtn.style.display = subtitleSearchKeyword ? 'flex' : 'none';
+    }
+    function renderPreviewListEnd(filtered) {
+        const endEl = document.querySelector('.bseas-content')?.querySelector('#bseas-list-end');
+        if (!endEl) return;
+        if (subtitleSearchKeyword && filtered.length === 0) {
+            safeSetInnerHTML(endEl, '<div class="bseas-empty">未匹配到字幕</div>');
+        } else if (previewRenderedCount >= filtered.length && filtered.length > PREVIEW_BATCH_SIZE) {
+            safeSetInnerHTML(endEl, `<div class="bseas-list-end">已加载全部 ${filtered.length} 条</div>`);
+        } else {
+            safeSetInnerHTML(endEl, '');
         }
-        if (subtitleSearchKeyword && !expandedSearch) {
+    }
+    // 扩大搜索的差异计算较耗时（含拼音匹配），延迟到列表渲染之后执行，避免阻塞输入与滚动
+    let _expandedHintTimer = 0;
+    function scheduleExpandedSearchHint(filtered) {
+        if (_expandedHintTimer) { clearTimeout(_expandedHintTimer); _expandedHintTimer = 0; }
+        const actions = document.querySelector('.bseas-content')?.querySelector('#bseas-footer-actions');
+        if (!actions) return;
+        if (subtitleSearchKeyword && expandedSearch) {
+            safeSetInnerHTML(actions, '<span id="bseas-restore-search" class="bseas-footer-action">恢复普通搜索</span>');
+            return;
+        }
+        safeSetInnerHTML(actions, '');
+        if (!subtitleSearchKeyword) return;
+        const keyword = subtitleSearchKeyword;
+        _expandedHintTimer = setTimeout(() => {
+            _expandedHintTimer = 0;
+            if (currentTab !== 'preview' || subtitleSearchKeyword !== keyword || expandedSearch) return;
             const body = currentSubtitleData?.body || [];
             const expandedResult = filterSubtitles(body, 'expanded');
             const isDifferent = expandedResult.length !== filtered.length || expandedResult.some((it, i) => it !== filtered[i]);
-            if (isDifferent) footer += `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-expand-search" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">扩大搜索</span></div>`;
-        } else if (subtitleSearchKeyword && expandedSearch) {
-            footer += `<div style="text-align:center;padding:14px;font-size:13px;"><span id="bseas-restore-search" style="color:#00a1d6;text-decoration:underline;cursor:pointer;">恢复普通搜索</span></div>`;
-        }
-        return listHtml + footer;
+            if (!isDifferent) return;
+            const actionsEl = document.querySelector('.bseas-content')?.querySelector('#bseas-footer-actions');
+            if (actionsEl) safeSetInnerHTML(actionsEl, '<span id="bseas-expand-search" class="bseas-footer-action">扩大搜索</span>');
+        }, 0);
     }
-    function bindSubtitleItemClicks(container) {
-        container.querySelectorAll('.bseas-subtitle-item').forEach(item => item.addEventListener('click', (e) => { e.stopPropagation(); seekToTime(parseFloat(item.dataset.time)); }));
-        container.querySelectorAll('.bseas-jump-btn').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); jumpToSubtitleFromSearch(parseFloat(btn.dataset.time)); }));
+    // 全量重建：切换字幕、搜索条件变化、切换标签页时使用
+    function renderPreviewListFull(filtered) {
+        const el = document.querySelector('.bseas-content');
+        if (!el || currentTab !== 'preview') return;
+        const listContainer = el.querySelector('#bseas-subtitle-list-container');
+        if (!listContainer) return;
+        _previewRenderEpoch++;
+        _previewChunking = false;
+        // 切换字幕数据后从首批开始；同一数据重新渲染（切换标签页）则保留已加载进度
+        if (_previewRenderedBody !== (currentSubtitleData?.body || null) || previewRenderedCount < 1 || previewRenderedCount > filtered.length) {
+            previewRenderedCount = Math.min(PREVIEW_BATCH_SIZE, filtered.length);
+        }
+        _previewRenderedBody = currentSubtitleData?.body || null;
+        safeSetInnerHTML(listContainer, buildSubtitleItemsHtml(filtered.slice(0, previewRenderedCount)));
+        renderPreviewListEnd(filtered);
+        scheduleExpandedSearchHint(filtered);
+        updatePreviewSearchMeta(filtered);
+    }
+    // 增量追加：滚动到底自动加载与跟随模式扩展使用，避免整表重建
+    function appendPreviewItems(filtered, endCount) {
+        const listContainer = document.querySelector('#bseas-subtitle-list-container');
+        if (!listContainer) return false;
+        const newCount = Math.min(endCount, filtered.length);
+        if (newCount <= previewRenderedCount) return false;
+        const html = buildSubtitleItemsHtml(filtered.slice(previewRenderedCount, newCount));
+        if (html) safeInsertAdjacentHTML(listContainer, 'beforeend', html);
+        previewRenderedCount = newCount;
+        renderPreviewListEnd(filtered);
+        return true;
+    }
+    // 分帧追加大量项（如跳转到靠后的字幕），每帧最多一批，避免长任务卡顿
+    function ensurePreviewRendered(count, done) {
+        const filtered = getPreviewFilteredList();
+        const target = Math.min(count, filtered.length);
+        if (previewRenderedCount >= target) { if (done) done(); return; }
+        const epoch = _previewRenderEpoch;
+        _previewChunking = true;
+        const step = () => {
+            // 期间发生全量重建（切换字幕/导航/搜索变化）则中止，避免把过期条目写入新列表
+            if (_previewRenderEpoch !== epoch) { _previewChunking = false; return; }
+            if (!appendPreviewItems(filtered, previewRenderedCount + PREVIEW_BATCH_SIZE)) { _previewChunking = false; return; }
+            if (previewRenderedCount < target) requestAnimationFrame(step);
+            else { _previewChunking = false; if (done) done(); }
+        };
+        requestAnimationFrame(step);
+    }
+    function maybeAutoLoadPreview() {
+        if (currentTab !== 'preview' || followModeActive || _previewChunking) return;
+        const content = document.querySelector('.bseas-content');
+        if (!content || !document.querySelector('#bseas-subtitle-list-container')) return;
+        if (content.scrollTop + content.clientHeight < content.scrollHeight - PREVIEW_AUTO_LOAD_THRESHOLD_PX) return;
+        const filtered = getPreviewFilteredList();
+        if (previewRenderedCount >= filtered.length) return;
+        appendPreviewItems(filtered, previewRenderedCount + PREVIEW_BATCH_SIZE);
+    }
+    // 列表交互统一事件委托：不为每条字幕单独绑定监听器
+    function onPreviewListClick(e) {
+        const jumpBtn = e.target.closest('.bseas-jump-btn');
+        if (jumpBtn) { e.stopPropagation(); jumpToSubtitleFromSearch(parseFloat(jumpBtn.dataset.time)); return; }
+        const expandBtn = e.target.closest('#bseas-expand-search');
+        if (expandBtn) {
+            expandedSearch = true;
+            previewRenderedCount = 0;
+            if (followModeActive) stopFollowMode();
+            updatePreviewList();
+            scrollToPreviewTop();
+            return;
+        }
+        const restoreBtn = e.target.closest('#bseas-restore-search');
+        if (restoreBtn) {
+            expandedSearch = false;
+            previewRenderedCount = 0;
+            if (followModeActive) stopFollowMode();
+            updatePreviewList();
+            scrollToPreviewTop();
+            return;
+        }
+        const item = e.target.closest('.bseas-subtitle-item');
+        if (item) { e.stopPropagation(); seekToTime(parseFloat(item.dataset.time)); }
     }
     // 清空字幕搜索并同步搜索框相关 UI
     function clearSubtitleSearchUI() {
         subtitleSearchKeyword = '';
         expandedSearch = false;
-        currentPreviewLimit = 0;
+        previewRenderedCount = 0;
         const content = document.querySelector('.bseas-content');
         const searchInput = content?.querySelector('#bseas-subtitle-search');
         if (searchInput) searchInput.value = '';
@@ -3884,72 +4082,56 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const idx = body.findIndex(it => it.from === t);
         if (idx === -1) return;
         clearSubtitleSearchUI();
-        if (idx >= bseas_max_preview_subtitles) currentPreviewLimit = Math.ceil((idx + 1) / bseas_max_preview_subtitles) * bseas_max_preview_subtitles;
         updatePreviewList();
-        requestAnimationFrame(() => {
-            const contentEl = document.querySelector('.bseas-content');
-            if (!contentEl) return;
-            const target = contentEl.querySelectorAll('.bseas-subtitle-item')[idx];
-            if (!target) return;
-            target.classList.add('jump-flash');
-            setTimeout(() => target.classList.remove('jump-flash'), 2500);
-            contentEl.scrollTo({ top: target.offsetTop - contentEl.clientHeight / 2 + target.clientHeight / 2, behavior: 'smooth' });
-        });
-    }
-    function bindLoadMoreClick(container) {
-        container.querySelector('#bseas-load-more')?.addEventListener('click', () => {
-            currentPreviewLimit = (currentPreviewLimit > 0 ? currentPreviewLimit : bseas_max_preview_subtitles) + bseas_max_preview_subtitles;
-            updatePreviewList();
-        });
-    }
-    function bindExpandSearchClick(container) {
-        container.querySelector('#bseas-expand-search')?.addEventListener('click', () => {
-            expandedSearch = true;
-            currentPreviewLimit = 0;
-            updatePreviewList();
-            scrollToPreviewTop();
-        });
-        container.querySelector('#bseas-restore-search')?.addEventListener('click', () => {
-            expandedSearch = false;
-            currentPreviewLimit = 0;
-            updatePreviewList();
-            scrollToPreviewTop();
-        });
+        const locate = () => {
+            requestAnimationFrame(() => {
+                const contentEl = document.querySelector('.bseas-content');
+                const target = document.querySelector('#bseas-subtitle-list-container')?.children[idx];
+                if (!contentEl || !target) return;
+                target.classList.add('jump-flash');
+                setTimeout(() => target.classList.remove('jump-flash'), 2500);
+                contentEl.scrollTo({ top: target.offsetTop - contentEl.clientHeight / 2 + target.clientHeight / 2, behavior: 'smooth' });
+            });
+        };
+        if (idx >= previewRenderedCount) ensurePreviewRendered(idx + 1, locate);
+        else locate();
     }
     function scrollToPreviewTop() {
         const content = document.querySelector('.bseas-content');
         if (content) content.scrollTop = 0;
     }
     function updatePreviewList() {
-        const el = document.querySelector('.bseas-content');
-        if (!el || currentTab !== 'preview') return;
-        const body = currentSubtitleData?.body || [];
-        const filtered = filterSubtitles(body);
-        const listContainer = el.querySelector('#bseas-subtitle-list-container');
-        if (listContainer) {
-            safeSetInnerHTML(listContainer, buildSubtitleListHtml(filtered));
-            bindSubtitleItemClicks(listContainer);
-            bindLoadMoreClick(listContainer);
-            bindExpandSearchClick(listContainer);
-        }
-        const countEl = el.querySelector('.bseas-search-count');
-        if (countEl) {
-            countEl.textContent = subtitleSearchKeyword ? `${filtered.length} 条` : '';
-        }
-        const clearBtn = el.querySelector('#bseas-search-clear');
-        if (clearBtn) { clearBtn.style.display = subtitleSearchKeyword ? 'flex' : 'none'; }
+        renderPreviewListFull(getPreviewFilteredList());
+    }
+    // 字数统计依赖全量字幕，按数据引用缓存，避免每次切换标签页重复拼接大字符串
+    let _previewCharStatsCache = { data: null, chars: 0, charsWithTs: 0 };
+    function getPreviewCharStats(body) {
+        if (_previewCharStatsCache.data === body) return _previewCharStatsCache;
+        let chars = 0;
+        for (const it of body) chars += it.content.length;
+        _previewCharStatsCache = { data: body, chars, charsWithTs: getTimestampedTextForAI().length };
+        return _previewCharStatsCache;
     }
     function renderPreviewTab(el) {
-        if (!currentSubtitleData?.body?.length) { safeSetInnerHTML(el, '<div class="bseas-empty">未获取到字幕，点击刷新以重试</div>'); return; }
+        if (!currentSubtitleData?.body?.length) { safeSetInnerHTML(el, '<div class="bseas-empty">未获取到字幕</div>'); return; }
         const body = currentSubtitleData.body;
         const filtered = filterSubtitles(body);
         const cnt = body.length;
         const dur = body[cnt - 1].to;
-        const chars = body.reduce((s, i) => s + i.content.length, 0);
-        const charsWithTs = getTimestampedTextForAI().length;
+        const statsCache = getPreviewCharStats(body);
+        const chars = statsCache.chars;
+        const charsWithTs = statsCache.charsWithTs;
         const searchBox = `<div class="bseas-search-box"><span class="bseas-search-icon"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg></span><input type="text" id="bseas-subtitle-search" class="bseas-search-input" placeholder="搜索字幕内容..." value="${escapeHtml(subtitleSearchKeyword)}"><span class="bseas-search-count">${subtitleSearchKeyword ? filtered.length + ' 条' : ''}</span><span class="bseas-search-clear" id="bseas-search-clear" style="${subtitleSearchKeyword ? '' : 'display:none;'}"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></span></div>`;
         const stats = `<div class="bseas-stats"><div class="bseas-stat-item"><div class="bseas-stat-label">总条数</div><div class="bseas-stat-value">${cnt}</div></div><div class="bseas-stat-item"><div class="bseas-stat-label">总时长</div><div class="bseas-stat-value">${formatTime(dur)}</div></div><div class="bseas-stat-item ${showPreviewCharsWithTs ? 'bseas-stat-compact' : ''}" id="bseas-chars-toggle" style="cursor:pointer;" title="点击切换"><div class="bseas-stat-label"><span>${showPreviewCharsWithTs ? '总字数(带时间戳)' : '总字数'}</span></div><div class="bseas-stat-value">${showPreviewCharsWithTs ? charsWithTs : chars}</div></div></div>`;
-        safeSetInnerHTML(el, searchBox + stats + `<div id="bseas-subtitle-list-container">${buildSubtitleListHtml(filtered)}</div>`);
+        if (_previewRenderedBody !== body || previewRenderedCount < 1 || previewRenderedCount > filtered.length) {
+            previewRenderedCount = Math.min(PREVIEW_BATCH_SIZE, filtered.length);
+        }
+        _previewRenderedBody = body;
+        _previewRenderEpoch++;
+        _previewChunking = false;
+        safeSetInnerHTML(el, searchBox + stats + `<div id="bseas-subtitle-list-container">${buildSubtitleItemsHtml(filtered.slice(0, previewRenderedCount))}</div><div id="bseas-subtitle-footer" class="bseas-list-footer"><div id="bseas-list-end"></div><div id="bseas-footer-actions"></div></div>`);
+        renderPreviewListEnd(filtered);
+        scheduleExpandedSearchHint(filtered);
         const searchInput = el.querySelector('#bseas-subtitle-search');
         if (searchInput) {
             let debounceTimer;
@@ -3959,7 +4141,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 isComposing = false;
                 clearTimeout(debounceTimer);
                 subtitleSearchKeyword = e.target.value.trim();
-                currentPreviewLimit = 0;
+                previewRenderedCount = 0;
                 expandedSearch = false;
                 if (followModeActive) stopFollowMode();
                 updatePreviewList();
@@ -3969,7 +4151,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 clearTimeout(debounceTimer);
                 debounceTimer = setTimeout(() => {
                     subtitleSearchKeyword = e.target.value.trim();
-                    currentPreviewLimit = 0;
+                    previewRenderedCount = 0;
                     expandedSearch = false;
                     if (followModeActive) stopFollowMode();
                     updatePreviewList();
@@ -3978,7 +4160,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         el.querySelector('#bseas-search-clear')?.addEventListener('click', () => {
             subtitleSearchKeyword = '';
-            currentPreviewLimit = 0;
+            previewRenderedCount = 0;
             expandedSearch = false;
             const si = el.querySelector('#bseas-subtitle-search');
             if (si) si.value = '';
@@ -3995,9 +4177,10 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 item.querySelector('.bseas-stat-value').textContent = showPreviewCharsWithTs ? charsWithTs : chars;
             }
         });
-        bindSubtitleItemClicks(el);
-        bindLoadMoreClick(el);
-        bindExpandSearchClick(el);
+        if (!el._bseasPreviewListBound) {
+            el._bseasPreviewListBound = true;
+            el.addEventListener('click', onPreviewListClick);
+        }
     }
 
     // ===================== 21. AI 分析页渲染 =====================
@@ -4420,11 +4603,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                     </div>
                 </div>
                 <div class="bseas-settings-row">
-                    <label class="bseas-settings-stack-label">浏览页单次加载字幕数量上限</label>
-                    <input type="number" class="bseas-settings-input" id="bseas-s-max-preview" value="${bseas_max_preview_subtitles}" min="1">
-                    <div class="bseas-settings-hint">为避免页面卡顿，浏览页单次最多渲染此数量的字幕，点击继续加载可以加载更多字幕。</div>
-                </div>
-                <div class="bseas-settings-row">
                     <label class="bseas-settings-stack-label">自动更新提醒</label>
                     <select class="bseas-settings-input" id="bseas-s-update-mode">
                         <option value="always" ${bseas_update_mode === 'always' ? 'selected' : ''}>总是</option>
@@ -4623,15 +4801,29 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         hasJumpedAds = {};
         showRawAIText = false;
         subtitleSearchKeyword = '';
-        currentPreviewLimit = 0;
+        previewRenderedCount = 0;
         expandedSearch = false;
+        subtitleFetchRetries = 0;
         const existingMark = document.getElementById('bseas-ad-progress-mark');
         if (existingMark) existingMark.remove();
         updateUI();
         setTimeout(() => fetchAllSubtitles(), AUTO_FETCH_DELAY_MS);
     }
     let lastUrl = location.href;
-    new MutationObserver(() => { if (location.href !== lastUrl) { lastUrl = location.href; resetState(); } }).observe(document, { subtree: true, childList: true });
+    function handleUrlChange() {
+        if (location.href === lastUrl) return;
+        lastUrl = location.href;
+        // 挂钩在页面history 调用链中同步执行，异常必须隔离，避免影响站点自身导航
+        try { resetState(); } catch (e) {}
+    }
+    // SPA 导航经 history API 完成：挂钩 pushState/replaceState 与 popstate/hashchange，
+    // 替代全文档 MutationObserver，避免为页面任何 DOM 变动触发回调
+    const _historyPushState = history.pushState;
+    history.pushState = function (...args) { const ret = _historyPushState.apply(this, args); handleUrlChange(); return ret; };
+    const _historyReplaceState = history.replaceState;
+    history.replaceState = function (...args) { const ret = _historyReplaceState.apply(this, args); handleUrlChange(); return ret; };
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
     if (typeof module !== 'undefined' && module.exports) {
