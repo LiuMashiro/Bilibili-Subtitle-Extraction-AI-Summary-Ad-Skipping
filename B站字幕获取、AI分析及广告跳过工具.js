@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.6.0
+// @version      2.6.1
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,7 +39,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.6.0';
+    const SCRIPT_VERSION = '2.6.1';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -408,7 +408,7 @@ ${d.overviewWord}概括视频核心主题。
                 inset 0 1px 0 rgba(255,255,255,0.95);
         }
         .bseas-trigger-btn:active { transform: scale(0.94); }
-        .bseas-trigger-btn svg { width:26px; height:26px; fill: var(--bseas-primary); transition: transform 0.55s var(--ease-spring), fill 0.3s; pointer-events:none; filter: drop-shadow(0 1px 2px rgba(0,174,236,0.25)); }
+        .bseas-trigger-btn svg { width:26px; height:26px; fill: var(--bseas-primary); stroke:rgba(255,255,255,0.85); stroke-width:4; paint-order:stroke; stroke-linejoin:round; transition: transform 0.55s var(--ease-spring), fill 0.3s; pointer-events:none; }
         .bseas-trigger-btn:hover svg { transform: scale(1.15); }
         .bseas-trigger-btn::after {
             content:''; position:absolute; inset:-2px; border-radius:22px;
@@ -443,7 +443,10 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-panel.no-transition { transition:none !important; }
         .bseas-resize-edge { position:absolute; z-index:40; pointer-events:auto; }
         .bseas-resize-edge.left { left:0; top:0; width:6px; height:100%; cursor:ew-resize; }
-        .bseas-resize-edge.right { right:0; top:0; width:3px; height:100%; cursor:ew-resize; }
+        .bseas-resize-edge.right { right:0; top:0; width:6px; height:100%; cursor:ew-resize; }
+        .bseas-rz-seg::after { display:none; }
+        .bseas-rz-indicator { pointer-events:none; }
+        .bseas-panel:has(.bseas-rz-seg:hover) .bseas-rz-indicator::after { background:rgba(0,174,236,0.55); }
         .bseas-resize-edge.top { left:6px; right:6px; top:0; height:4px; cursor:ns-resize; }
         .bseas-resize-edge.bottom { left:6px; right:6px; bottom:0; height:5px; cursor:ns-resize; }
         .bseas-resize-edge:hover { background:rgba(0,174,236,0.12); }
@@ -631,14 +634,15 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-ext-link { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:8px; text-decoration:none; font-size:12px; font-weight:500; transition:all 0.2s; color:var(--bseas-text-dim); background:var(--bseas-bg-card); border:1px solid var(--bseas-border); }
         .bseas-ext-link:hover { color:var(--bseas-text); border-color:#cbd5e1; transform:translateY(-1px); box-shadow:0 2px 6px rgba(0,0,0,0.06); text-decoration:none; }
         .bseas-ext-link svg { width:14px; height:14px; fill:currentColor; flex-shrink:0; }
-        .bseas-api-warning { background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-md); padding:10px 16px; margin:8px 22px 0; display:flex; align-items:center; gap:10px; animation:bseas-shake 0.5s ease; }
-        .bseas-api-warning-icon { font-size:18px; }
+        .bseas-api-warning { background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-md); padding:10px 16px; margin:8px 10px 0; display:flex; align-items:center; gap:10px; animation:bseas-shake 0.5s ease; }
+        .bseas-api-warning-icon { display:flex; align-items:center; flex-shrink:0; }
+        .bseas-api-warning-icon svg { width:18px; height:18px; stroke:#d97706; }
         .bseas-api-warning-text { flex:1; font-size:13px; color:var(--bseas-warning-text); font-weight:600; }
-        .bseas-api-warning-btn { background:var(--bseas-warning); color:white; border:none; border-radius:var(--bseas-radius-sm); padding:6px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s; }
-        .bseas-api-warning-btn:hover { background:#e0a800; transform:translateY(-1px); }
+        .bseas-api-warning-btn { background:#e0a800; color:white; border:none; border-radius:var(--bseas-radius-sm); padding:6px 12px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s; }
+        .bseas-api-warning-btn:hover { background:#c79500; transform:translateY(-1px); }
         .bseas-api-warning-btn:active { transform:translateY(0); }
         .bseas-source-section { border-bottom:1px solid var(--bseas-border); flex-shrink:0; }
-        .bseas-sticky-top { position:sticky; top:0; z-index:20; flex-shrink:0; margin:0 -22px; background:rgba(255,255,255,0.6); backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px); border-bottom:1px solid var(--bseas-border); }
+        .bseas-sticky-top { z-index:20; flex-shrink:0; margin:0 -22px; background:rgba(255,255,255,0.6); backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px); border-bottom:1px solid var(--bseas-border); }
         .bseas-source-header { display:flex; align-items:center; justify-content:space-between; padding:7px 22px; cursor:pointer; user-select:none; transition:background 0.2s; }
         .bseas-source-header:hover { background:rgba(0,0,0,0.02); }
         .bseas-source-label { font-size:13px; font-weight:600; color:var(--bseas-text-dim); }
@@ -674,7 +678,7 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-tab:hover:not(.active)::before { width:60%; }
         .bseas-tab.active { background:white; color:var(--bseas-primary); box-shadow:0 2px 8px rgba(0,0,0,0.06); transform:translateY(-1px); }
         .bseas-tab.active::before { width:80%; }
-        .bseas-content { flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable; padding:0 22px 0; overscroll-behavior:contain; -webkit-overscroll-behavior:contain; display:flex; flex-direction:column; position:relative; z-index:0; }
+        .bseas-content { flex:1; min-height:0; padding:0 22px 0; display:flex; flex-direction:column; position:relative; z-index:0; }
         .bseas-tab-body.anim-right { animation:bseas-tab-in-right 0.3s var(--ease-out); }
         .bseas-tab-body.anim-left { animation:bseas-tab-in-left 0.3s var(--ease-out); }
         .bseas-settings-page { animation:bseas-tab-in-right 0.3s var(--ease-out); }
@@ -688,11 +692,10 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-settings-back { display:flex; align-items:center; gap:6px; margin:0 0 12px; padding:8px 12px; background:rgba(120,120,128,0.06); border:1px solid var(--bseas-border); border-radius:var(--bseas-radius-sm); cursor:pointer; font-size:13px; font-weight:500; color:var(--bseas-text-dim); transition:all 0.2s; align-self:flex-start; }
         .bseas-settings-back:hover { color:var(--bseas-text); background:rgba(120,120,128,0.1); }
         .bseas-settings-back svg { width:16px; height:16px; fill:currentColor; }
-        .bseas-content::-webkit-scrollbar { width:6px; }
-        .bseas-content::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:4px; transition:background 0.2s; }
-        .bseas-content::-webkit-scrollbar-thumb:hover { background:#94a3b8; }
-        .bseas-tab-body { flex:1; min-height:0; display:flex; flex-direction:column; padding-top:14px; }
-        .bseas-tab-body::after { content:""; display:block; flex-shrink:0; height:var(--bseas-footer-h, 96px); }
+        .bseas-tab-body::-webkit-scrollbar { width:6px; }
+        .bseas-tab-body::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:4px; transition:background 0.2s; }
+        .bseas-tab-body::-webkit-scrollbar-thumb:hover { background:#94a3b8; }
+        .bseas-tab-body { flex:1; min-height:0; display:flex; flex-direction:column; padding-top:14px; padding-right:16px; margin-right:-22px; overflow-y:auto; scrollbar-gutter:stable; overscroll-behavior:contain; -webkit-overscroll-behavior:contain; position:relative; }
         .bseas-checkbox-label { display:flex; align-items:center; gap:8px; font-size:14px; font-weight:500; color:var(--bseas-text); cursor:pointer; user-select:none; transition:color 0.2s; }
         .bseas-checkbox-label:hover { color:var(--bseas-primary); }
         .bseas-checkbox-label input[type="checkbox"] { appearance:none; -webkit-appearance:none; width:20px; height:20px; border:1.5px solid #cbd5e1; border-radius:6px; cursor:pointer; margin:0; flex-shrink:0; transition:border-color 0.2s var(--ease-out), background-color 0.2s var(--ease-out), box-shadow 0.2s var(--ease-out); position:relative; background:#fff; outline:none; }
@@ -798,6 +801,7 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-qa-a:hover { box-shadow:0 4px 12px rgba(0,0,0,0.04); }
         .bseas-noapi-box { background:var(--bseas-warning-bg); border:1px solid var(--bseas-warning-border); border-radius:var(--bseas-radius-md); padding:16px; margin-bottom:16px; }
         .bseas-noapi-title { font-size:14px; font-weight:700; color:var(--bseas-warning-text); margin-bottom:8px; display:flex; align-items:center; gap:6px; }
+        .bseas-noapi-title svg { width:16px; height:16px; stroke:#d97706; flex-shrink:0; }
         .bseas-noapi-desc { font-size:13px; color:var(--bseas-warning-text); line-height:1.6; margin-bottom:12px; }
         .bseas-settings { padding:8px 0 4px; }
         .bseas-settings-section { margin-bottom:28px; }
@@ -848,6 +852,11 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-settings-row-action .bseas-toggle { }
 
         .bseas-password-mask { -webkit-text-security:disc; }
+        #bseas-s-verify { font-size:12px; font-weight:500; color:var(--bseas-primary); background:none; border:none; padding:0; cursor:pointer; transition:color 0.2s, opacity 0.2s; }
+        #bseas-s-verify:hover:not(:disabled) { color:var(--bseas-primary-hover); }
+        #bseas-s-verify:disabled { opacity:0.6; cursor:default; }
+        #bseas-s-verify.ok { color:#16a34a; }
+        #bseas-s-verify.err { color:#ef4444; }
         .bseas-danger-link { display:inline-block; color: var(--bseas-danger); font-size:12.5px; text-decoration:none; cursor:pointer; transition: text-decoration 0.2s; }
         .bseas-danger-link:hover { text-decoration: underline; }
         #bseas-clear-cache { color: #d97706; }
@@ -864,7 +873,7 @@ ${d.overviewWord}概括视频核心主题。
             -webkit-backdrop-filter: blur(24px);
             border-top: 0.5px solid var(--bseas-border);
             display:flex; gap:10px; flex-direction:column;
-            position:absolute; left:0; right:0; bottom:0; z-index:6;
+            flex-shrink:0;
         }
         .bseas-btn { flex:1; min-width:0; padding:12px 8px; border:0.5px solid var(--bseas-border); border-radius:var(--bseas-radius-md); font-size:13.5px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; white-space:nowrap; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); position:relative; overflow:hidden; }
         .bseas-btn svg { width:15px; height:15px; fill:currentColor; flex-shrink:0; }
@@ -1694,12 +1703,14 @@ ${d.overviewWord}概括视频核心主题。
         if (currentAbortController) { try { currentAbortController.abort(); } catch (e) {} currentAbortController = null; }
         if (currentGMXHR && typeof currentGMXHR.abort === 'function') { try { currentGMXHR.abort(); } catch (e) {} currentGMXHR = null; }
     }
-    function buildAPIRequest(messages, stream) {
-        const isClaude = bseas_api_url.includes('anthropic.com');
-        const isGemini = bseas_api_url.includes('generativelanguage.googleapis.com');
-        const actualModel = bseas_model.replace(' (免费)', '');
-        let fetchUrl = bseas_api_url;
-        const safeApiKey = bseas_api_key.replace(/[^\x20-\x7E]/g, '');
+    function buildAPIRequest(messages, stream, overrides = {}) {
+        const reqUrl = overrides.apiUrl !== undefined ? overrides.apiUrl : bseas_api_url;
+        const reqKey = overrides.apiKey !== undefined ? overrides.apiKey : bseas_api_key;
+        const actualModel = (overrides.model !== undefined ? overrides.model : bseas_model).replace(' (免费)', '');
+        const isClaude = reqUrl.includes('anthropic.com');
+        const isGemini = reqUrl.includes('generativelanguage.googleapis.com');
+        let fetchUrl = reqUrl;
+        const safeApiKey = reqKey.replace(/[^\x20-\x7E]/g, '');
         const headers = { 'Content-Type': 'application/json' };
         let bodyData = {};
         if (isClaude) {
@@ -1798,6 +1809,22 @@ ${d.overviewWord}概括视频核心主题。
                 },
                 onerror() { currentGMXHR = null; reject(new Error('网络错误')); },
                 ontimeout() { currentGMXHR = null; reject(new Error('请求超时')); }
+            });
+        });
+    }
+    // API Key 验证：发送一次最小对话请求，HTTP 2xx 即视为 Key 有效
+    function verifyApiKeyOnce(apiKey, apiUrl, model) {
+        return new Promise((resolve, reject) => {
+            if (!apiKey || !apiUrl) { reject(new Error('缺少 API Key 或 URL')); return; }
+            const { fetchUrl, headers, bodyData } = buildAPIRequest([{ role: 'user', content: '请只回复 OK' }], false, { apiKey, apiUrl, model });
+            GM_xmlhttpRequest({
+                method: 'POST', url: fetchUrl, headers, data: JSON.stringify(bodyData), timeout: 20000,
+                onload(r) {
+                    if (r.status >= 200 && r.status < 300) resolve();
+                    else reject(new Error('HTTP ' + r.status));
+                },
+                onerror() { reject(new Error('网络错误')); },
+                ontimeout() { reject(new Error('请求超时')); }
             });
         });
     }
@@ -2466,9 +2493,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         }
         updateContent();
         updateTabBackTopHint();
-        const panel = document.querySelector('.bseas-panel');
-        const _ft2 = panel?.querySelector('.bseas-footer');
-        if (_ft2 && panel.classList.contains('show')) panel.style.setProperty('--bseas-footer-h', (_ft2.offsetHeight + 14) + 'px');
         const animTarget = document.querySelector('.bseas-tab-body');
         if (animTarget) {
             animTarget.classList.remove('anim-right', 'anim-left');
@@ -2533,7 +2557,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                         <button class="bseas-icon-btn settings-btn" id="bseas-settings-btn" title="设置"><svg viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg></button>
                     </div>
                 </div>
-                <div class="bseas-api-warning-container">${showApiWarning ? `<div class="bseas-api-warning"><span class="bseas-api-warning-icon">⚠</span><span class="bseas-api-warning-text">未设置API Key，AI分析功能将无法使用</span><button class="bseas-api-warning-btn" id="bseas-go-settings">去设置</button></div>` : ''}</div>
+                <div class="bseas-api-warning-container">${showApiWarning ? `<div class="bseas-api-warning"><span class="bseas-api-warning-icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span><span class="bseas-api-warning-text">未设置API Key，AI分析及广告跳过相关功能将无法使用</span><button class="bseas-api-warning-btn" id="bseas-go-settings">去设置</button></div>` : ''}</div>
                 <div class="bseas-source-section"><div class="bseas-source-header" id="bseas-source-toggle"><span class="bseas-source-label">字幕</span><span class="bseas-source-arrow collapsed" id="bseas-source-arrow"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg></span></div><div class="bseas-collapse" id="bseas-source-collapse"><div class="bseas-collapse-inner"><div class="bseas-source-body" id="bseas-source-body"><div style="color:var(--bseas-text-dim);font-size:13px;">暂无数据</div></div></div></div></div>
                 <div class="bseas-tabs"><button class="bseas-tab active" data-tab="preview">浏览</button><button class="bseas-tab" data-tab="ai">AI 分析</button><button class="bseas-tab" data-tab="text">文本</button></div></div><div class="bseas-tab-body"><div class="bseas-empty">正在初始化...</div></div></div>
                 <div class="bseas-footer">
@@ -2547,7 +2571,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                         <button class="bseas-btn bseas-btn-primary" id="bseas-s-save">保存设置</button>
                     </div>
                 </div>
-                <div class="bseas-resize-edge left"></div><div class="bseas-resize-edge right"></div><div class="bseas-resize-edge top"></div><div class="bseas-resize-edge bottom"></div><div class="bseas-resize-corner corner-tl"></div><div class="bseas-resize-corner corner-tr"></div><div class="bseas-resize-corner corner-bl"></div><div class="bseas-resize-corner corner-br"></div>
+                <div class="bseas-resize-edge left"></div><div class="bseas-resize-edge right bseas-rz-seg" id="bseas-rz-top"></div><div class="bseas-resize-edge right bseas-rz-seg" id="bseas-rz-bottom"></div><div class="bseas-resize-edge right bseas-rz-indicator"></div><div class="bseas-resize-edge top"></div><div class="bseas-resize-edge bottom"></div><div class="bseas-resize-corner corner-tl"></div><div class="bseas-resize-corner corner-tr"></div><div class="bseas-resize-corner corner-bl"></div><div class="bseas-resize-corner corner-br"></div>
             </div>
         `);
         document.body.appendChild(c);
@@ -2737,8 +2761,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             newH = Math.max(320, Math.min(maxH, newH));
             panel.style.width = newW + 'px';
             panel.style.height = newH + 'px';
-            const _ft = panel.querySelector('.bseas-footer');
-            if (_ft) panel.style.setProperty('--bseas-footer-h', (_ft.offsetHeight + 14) + 'px');
         };
         const onUp = () => {
             if (!resizing) return;
@@ -2922,8 +2944,6 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 scheduleIndicatorFade(panel);
                 const _tb = panel.querySelector('.bseas-tab-body');
                 if (_tb) _tb.classList.remove('anim-right', 'anim-left');
-                const _ft = panel.querySelector('.bseas-footer');
-                if (_ft) panel.style.setProperty('--bseas-footer-h', (_ft.offsetHeight + 14) + 'px');
                 updateTabBackTopHint();
                 if (allSubtitles.length === 0) fetchAllSubtitles();
             }
@@ -2960,6 +2980,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         bindTabBackTopHint();
         bindFollowExitScroll();
         bindPreviewAutoLoad();
+        bindResizeEdgeSegs();
         c.querySelector('#bseas-s-cancel')?.addEventListener('click', (e) => { e.stopPropagation(); switchTab('preview'); });
         c.querySelector('#bseas-s-save')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -3448,7 +3469,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     function scrollFollowToItem(idx) {
         if (!followModeActive) return;
-        const content = document.querySelector('.bseas-content');
+        const content = document.querySelector('.bseas-tab-body');
         const target = document.querySelector('#bseas-subtitle-list-container')?.children[idx];
         if (!content || !target) return;
         // 高亮元素用引用跟踪，避免每次定位都全量扫描列表
@@ -3478,7 +3499,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     // 一键回顶：点击当前所在页标签即可回到顶部（用户主动离开当前位置，退出跟随）
     function scrollContentToTop() {
-        const content = document.querySelector('.bseas-content');
+        const content = document.querySelector('.bseas-tab-body');
         if (!content) return;
         if (followModeActive) stopFollowMode();
         content.scrollTo({ top: 0, behavior: 'smooth' });
@@ -3486,19 +3507,19 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     function updateTabBackTopHint() {
         const active = document.querySelector('.bseas-tab.active');
         if (!active) return;
-        const content = document.querySelector('.bseas-content');
+        const content = document.querySelector('.bseas-tab-body');
         const scrolledDown = !!content && content.scrollTop > 200;
         active.title = scrolledDown ? '点击回到顶部' : '';
     }
     function bindTabBackTopHint() {
-        const content = document.querySelector('.bseas-content');
+        const content = document.querySelector('.bseas-tab-body');
         if (!content || content._bseasTabHintBound) return;
         content._bseasTabHintBound = true;
         content.addEventListener('scroll', updateTabBackTopHint, { passive: true });
     }
     // 跟随模式下用户手动翻页/滚动时自动退出跟随：优先用输入事件判定，滚动事件仅作滚动条拖动的兜底
     function bindFollowExitScroll() {
-        const content = document.querySelector('.bseas-content');
+        const content = document.querySelector('.bseas-tab-body');
         if (!content || content._bseasFollowExitBound) return;
         content._bseasFollowExitBound = true;
         const exitIfFollowing = () => {
@@ -3515,9 +3536,61 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             if (followModeActive && !_followAutoScrolling) exitIfFollowing();
         }, { passive: true });
     }
+    // 右侧调整触发区与滚动条滑块的命中优先级：按滑块纵向范围拆为上下两段调整区，
+    // 滑块上仅触发滚动条，其余位置（含滚动条轨道）触发边缘调整
+    function bindResizeEdgeSegs() {
+        const panel = document.querySelector('.bseas-panel');
+        const topSeg = document.getElementById('bseas-rz-top');
+        const bottomSeg = document.getElementById('bseas-rz-bottom');
+        const tb = panel?.querySelector('.bseas-tab-body');
+        if (!panel || !topSeg || !bottomSeg || !tb || topSeg._bseasSegBound) return;
+        topSeg._bseasSegBound = true;
+        let rafPending = false;
+        const update = () => {
+            if (!panel.isConnected) return;
+            if (!panel.classList.contains('show')) {
+                topSeg.style.top = '0px';
+                topSeg.style.height = '100%';
+                bottomSeg.style.top = '0px';
+                bottomSeg.style.height = '0px';
+                return;
+            }
+            const pRect = panel.getBoundingClientRect();
+            if (!pRect.height) return;
+            const tRect = tb.getBoundingClientRect();
+            const maxScroll = tb.scrollHeight - tb.clientHeight;
+            let bandTop, bandBottom;
+            if (maxScroll <= 1) {
+                bandTop = pRect.height;
+                bandBottom = pRect.height;
+            } else {
+                // 滑块范围 = 轨道高度 × 可视比例，按 scrollTop 换算滑块偏移，上下各留 2px 缓冲
+                const trackH = tRect.height;
+                const thumbH = Math.max(20, (tb.clientHeight / tb.scrollHeight) * trackH);
+                const thumbOffset = (tb.scrollTop / maxScroll) * (trackH - thumbH);
+                bandTop = Math.max(0, tRect.top - pRect.top + thumbOffset - 2);
+                bandBottom = Math.min(pRect.height, tRect.top - pRect.top + thumbOffset + thumbH + 2);
+            }
+            topSeg.style.top = '0px';
+            topSeg.style.height = bandTop + 'px';
+            bottomSeg.style.top = bandBottom + 'px';
+            bottomSeg.style.height = (pRect.height - bandBottom) + 'px';
+        };
+        const schedule = () => {
+            if (rafPending) return;
+            rafPending = true;
+            requestAnimationFrame(() => { rafPending = false; update(); });
+        };
+        const ro = new ResizeObserver(schedule);
+        ro.observe(panel);
+        ro.observe(tb);
+        tb.addEventListener('scroll', schedule, { passive: true });
+        const mo = new MutationObserver(schedule);
+        mo.observe(tb, { childList: true, subtree: true });
+    }
     // 浏览页滚动到底自动加载下一批字幕：rAF 节流，被动监听，避免每帧重复判定
     function bindPreviewAutoLoad() {
-        const content = document.querySelector('.bseas-content');
+        const content = document.querySelector('.bseas-tab-body');
         if (!content || content._bseasAutoLoadBound) return;
         content._bseasAutoLoadBound = true;
         let scrollRafPending = false;
@@ -4030,7 +4103,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     }
     function maybeAutoLoadPreview() {
         if (currentTab !== 'preview' || followModeActive || _previewChunking) return;
-        const content = document.querySelector('.bseas-content');
+        const content = document.querySelector('.bseas-tab-body');
         if (!content || !document.querySelector('#bseas-subtitle-list-container')) return;
         if (content.scrollTop + content.clientHeight < content.scrollHeight - PREVIEW_AUTO_LOAD_THRESHOLD_PX) return;
         const filtered = getPreviewFilteredList();
@@ -4085,7 +4158,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         updatePreviewList();
         const locate = () => {
             requestAnimationFrame(() => {
-                const contentEl = document.querySelector('.bseas-content');
+                const contentEl = document.querySelector('.bseas-tab-body');
                 const target = document.querySelector('#bseas-subtitle-list-container')?.children[idx];
                 if (!contentEl || !target) return;
                 target.classList.add('jump-flash');
@@ -4097,7 +4170,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         else locate();
     }
     function scrollToPreviewTop() {
-        const content = document.querySelector('.bseas-content');
+        const content = document.querySelector('.bseas-tab-body');
         if (content) content.scrollTop = 0;
     }
     function updatePreviewList() {
@@ -4214,7 +4287,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 html += '<div style="text-align:center;font-size:12px;color:var(--bseas-text-muted);margin-bottom:16px;margin-top:-8px;">AI生成内容可能有误，请核查</div>';
                 if (!hasSubtitle) html += '<div class="bseas-empty" style="padding:40px 20px;">未获取到字幕，点击进行舆情分析</div>';
                 if (!bseas_api_key) {
-                    html += `<div class="bseas-noapi-box"><div class="bseas-noapi-title">⚠ 未配置 API Key</div><div class="bseas-noapi-desc">您可以在设置中配置 API Key。您也可以在设置中选择禁用 API Key，改为复制提示词。</div></div>`;
+                    html += `<div class="bseas-noapi-box"><div class="bseas-noapi-title"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>未配置 API Key</div><div class="bseas-noapi-desc">您可以在设置中配置 API Key。您也可以在设置中选择禁用 API Key，改为复制提示词。</div></div>`;
                 }
             }
         } else {
@@ -4451,6 +4524,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             <div class="bseas-settings-row">
                 <label class="bseas-settings-stack-label">API Key</label>
                 <input type="text" class="bseas-settings-input bseas-password-mask" id="bseas-s-key" value="${escapeHtml(currentPlatformKey)}" placeholder="输入 API Key...">
+                <div style="margin-top:8px;"><button type="button" id="bseas-s-verify">验证 API Key</button></div>
                 <div class="bseas-settings-hint">本程序不会上传 API Key。请勿泄露您的 API Key！</div>
             </div>
         </div>
@@ -4660,7 +4734,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             document.getElementById('bseas-s-url'),
             document.getElementById('bseas-s-model-select'),
             document.getElementById('bseas-s-model-custom'),
-            document.getElementById('bseas-s-key')
+            document.getElementById('bseas-s-key'),
+            document.getElementById('bseas-s-verify')
         ];
         function toggleApiSettings(disabled) {
             apiInputs.forEach(el => {
@@ -4716,6 +4791,42 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             currentKeyInput.value = GM_getValue('bseas_api_key_' + pSelect.value, '');
         });
         mSelect.addEventListener('change', updateModelCustom);
+        // API Key 验证：失败自动重试一次，仍失败则显示错误
+        const verifyBtn = document.getElementById('bseas-s-verify');
+        if (verifyBtn) {
+            const resetVerifyState = () => {
+                verifyBtn.disabled = false;
+                verifyBtn.classList.remove('ok', 'err');
+                verifyBtn.textContent = '验证 API Key';
+            };
+            verifyBtn.addEventListener('click', async () => {
+                if (verifyBtn.disabled) return;
+                const keyInput = document.getElementById('bseas-s-key');
+                const key = (keyInput?.value || '').trim();
+                const plat = pSelect.value;
+                const url = plat === 'custom' ? (urlInput.value || '').trim() : API_PLATFORMS[plat].url;
+                const model = mSelect.value === '自定义' ? (mCustom.value || '').trim() : mSelect.value;
+                if (!key || !url) {
+                    verifyBtn.classList.add('err');
+                    verifyBtn.textContent = '请输入 API Key';
+                    return;
+                }
+                verifyBtn.disabled = true;
+                verifyBtn.classList.remove('ok', 'err');
+                verifyBtn.textContent = '验证中...';
+                let ok = false;
+                for (let i = 0; i < 2 && !ok; i++) {
+                    try { await verifyApiKeyOnce(key, url, model); ok = true; }
+                    catch (e) { if (i === 0) await new Promise(r => setTimeout(r, 600)); }
+                }
+                verifyBtn.disabled = false;
+                verifyBtn.classList.add(ok ? 'ok' : 'err');
+                verifyBtn.textContent = ok ? '验证成功' : '错误';
+            });
+            pSelect.addEventListener('change', resetVerifyState);
+            document.getElementById('bseas-s-key')?.addEventListener('input', resetVerifyState);
+            mSelect.addEventListener('change', resetVerifyState);
+        }
         updateUIForPlatform(true);
         document.getElementById('bseas-api-hint-btn')?.addEventListener('click', () => {
             const collapse = document.getElementById('bseas-api-hint-collapse');
@@ -4732,7 +4843,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             adv.style.display = 'block';
             adv.classList.remove('back');
             void adv.offsetWidth;
-            const content = adv.closest('.bseas-content');
+            const content = adv.closest('.bseas-tab-body');
             if (content) content.scrollTop = 0;
         });
         document.getElementById('bseas-back-to-main')?.addEventListener('click', () => {
@@ -4745,7 +4856,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             main.classList.remove('bseas-main-anim');
             void main.offsetWidth;
             main.classList.add('bseas-main-anim');
-            const content = main.closest('.bseas-content');
+            const content = main.closest('.bseas-tab-body');
             if (content) content.scrollTop = content.scrollHeight;
         });
         updateStorageUsageDisplay();
