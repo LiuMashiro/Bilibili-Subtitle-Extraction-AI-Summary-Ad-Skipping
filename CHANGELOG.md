@@ -1,6 +1,18 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [2.6.1]
+### Added
+- 新增 API Key 验证功能
+
+### Changed
+- 面板唤起按钮的弹幕图标改善深色背景下的视觉效果
+- 滚动条上下以外为右侧窗口大小调整触发区，使两种右侧边缘操作区互相兼容
+- 优化未设置 API Key 提示条样式
+
+### Fixed
+- 修复浏览页滚动条被底部栏遮挡、并向上侵占顶部栏区域的问题
+
 ## [2.6.0] - 体验优化
 ### Changed
 - **大幅优化性能，更流畅，减少卡顿**
