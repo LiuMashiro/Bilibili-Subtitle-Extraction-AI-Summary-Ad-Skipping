@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站字幕获取、AI分析及广告跳过工具
 // @namespace    http://tampermonkey.net/
-// @version      2.6.1
+// @version      2.6.3
 // @description  实现字幕提取、AI内容总结（并可追问）、植入广告自动识别自动跳过，并依据评论区热门评论进行舆情分析。
 // @author       LiuMashiro
 // @license      MIT
@@ -39,7 +39,7 @@
     'use strict';
 
     // ===================== 1. 常量配置 =====================
-    const SCRIPT_VERSION = '2.6.1';
+    const SCRIPT_VERSION = '2.6.3';
     const GITHUB_REPO_URL = 'https://github.com/LiuMashiro/Bilibili-Subtitle-Extraction-AI-Summary-Ad-Skipping/tree/main';
     const GREASYFORK_URL = 'https://greasyfork.org/zh-CN/scripts/579482';
     const SCRIPTCAT_URL = 'https://scriptcat.org/zh-CN/script-show-page/6728';
@@ -58,12 +58,12 @@
     const AD_KEYWORD_RE = new RegExp(AD_KEYWORD_LIST.flatMap(k => k.split(/\s+/).filter(Boolean)).map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'));
 
     const API_PLATFORMS = {
-        deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1/chat/completions', models: ['deepseek-v4-flash', 'deepseek-v4-pro', '自定义'], link: 'https://platform.deepseek.com/' },
-        zlm: { name: '智谱 (提供免费模型)', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', models: ['GLM-4.7-Flash (免费)', 'GLM-5.3', 'GLM-5.2', 'GLM-5.1', 'GLM-5', 'GLM-5-Turbo', 'GLM-4.7', 'GLM-4.7-FlashX', 'GLM-4.6', 'GLM-4.5-Air', 'GLM-4.5-AirX', 'GLM-4-Long', 'GLM-4-FlashX-250414', 'GLM-4-Flash-250414', '自定义'], link: 'https://bigmodel.cn/' },
-        doubao: { name: '火山方舟', url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', models: ['doubao-seed-evolving', 'doubao-seed-2-1-pro-260628', 'doubao-seed-2-1-turbo-260628', 'doubao-seed-2-0-lite-260428', 'doubao-seed-2-0-mini-260428', 'doubao-seed-2-0-pro-260215', 'doubao-seed-2-0-lite-260215', 'doubao-seed-2-0-mini-260215', 'doubao-seed-2-0-code-preview-260215', 'doubao-seed-character-260628', 'glm-5-2-260617', 'deepseek-v4-pro-ga-260813', 'deepseek-v4-flash-ga-260731', 'deepseek-v4-pro-260425', 'deepseek-v4-flash-260425', 'doubao-seed-character-251128', 'doubao-seed-translation-250915', '自定义'], link: 'https://www.volcengine.com/product/ark' },
-        chatgpt: { name: 'ChatGPT', url: 'https://api.openai.com/v1/chat/completions', models: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-5.4-pro', '自定义'], link: 'https://platform.openai.com/' },
-        claude: { name: 'Claude', url: 'https://api.anthropic.com/v1/messages', models: ['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-fable-5', 'claude-mythos-5', 'claude-haiku-4-5-20251001', '自定义'], link: 'https://console.anthropic.com/' },
-        gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent', models: ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro', '自定义'], link: 'https://aistudio.google.com/' },
+        deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1/chat/completions', models: ['deepseek-flash', 'deepseek-v4-pro', '自定义'], link: 'https://platform.deepseek.com/' },
+        zlm: { name: '智谱 (提供免费模型)', url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions', models: ['GLM-4.7-Flash (免费)', 'GLM-5.3', 'GLM-5.3-Flash', 'GLM-5.3-FlashX', 'GLM-5.2', 'GLM-5.1', 'GLM-5', 'GLM-5-Turbo', 'GLM-4.7', 'GLM-4.7-FlashX', 'GLM-4.6', 'GLM-4.5', 'GLM-4.5-Flash (免费)', 'GLM-4.5-Air', 'GLM-4.5-AirX', 'GLM-4-Long', 'GLM-4-FlashX-250414', 'GLM-4-Flash-250414', '自定义'], link: 'https://bigmodel.cn/' },
+        doubao: { name: '火山方舟', url: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', models: ['doubao-seed-evolving', 'doubao-seed-2-1-pro-260915', 'doubao-seed-2-1-pro-260628', 'doubao-seed-2-1-turbo-260628', 'doubao-seed-2-1-lite-260915', 'doubao-seed-2-0-lite-260428', 'doubao-seed-2-0-mini-260428', 'doubao-seed-2-0-pro-260215', 'deepseek-v4-1-flash-261017', 'deepseek-v4-pro-ga-260813', 'deepseek-v4-flash-ga-260731', 'glm-5-3-flash-260828', 'glm-5-2-260617', 'kimi-k3-1-pro-261024', '自定义'], link: 'https://www.volcengine.com/product/ark' },
+        chatgpt: { name: 'ChatGPT', url: 'https://api.openai.com/v1/chat/completions', models: ['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-sol', 'gpt-6.1-terra', 'gpt-6-luna', 'gpt-5.5', 'gpt-5.4-mini', '自定义'], link: 'https://platform.openai.com/' },
+        claude: { name: 'Claude', url: 'https://api.anthropic.com/v1/messages', models: ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', '自定义'], link: 'https://console.anthropic.com/' },
+        gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent', models: ['gemini-4-argon', 'gemini-4-carbon', 'gemini-4-hydrogen', 'gemini-4-neon', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.1-pro-preview', '自定义'], link: 'https://aistudio.google.com/' },
         custom: { name: '自定义', url: '', models: ['自定义'], link: '' }
     };
     const TAB_OPTIONS = { preview: '浏览', ai: 'AI分析', text: '文本' };
@@ -102,11 +102,13 @@
     let bseas_platform = GM_getValue('bseas_platform', 'deepseek');
     let bseas_api_key = GM_getValue('bseas_api_key_' + bseas_platform, '');
     let bseas_api_url = GM_getValue('bseas_api_url', API_PLATFORMS.deepseek.url);
-    let bseas_model = GM_getValue('bseas_model', 'deepseek-v4-flash');
+    let bseas_model = GM_getValue('bseas_model', 'deepseek-flash');
     let bseas_auto_summary = GM_getValue('bseas_auto_summary', false);
     let bseas_auto_open_panel = GM_getValue('bseas_auto_open_panel', true);
     let bseas_auto_open_tab = GM_getValue('bseas_auto_open_tab', 'preview');
     let bseas_opinion_analysis = GM_getValue('bseas_opinion_analysis', true);
+    // 深度思考：关闭时主动请求服务端跳过思考阶段，开启时沿用服务端默认思考行为
+    let bseas_deep_thinking = GM_getValue('bseas_deep_thinking', false);
     let bseas_opinion_comments_count = GM_getValue('bseas_opinion_comments_count', 30);
     let bseas_detail_level = GM_getValue('bseas_detail_level', 'concise');
     let bseas_auto_skip_ad = GM_getValue('bseas_auto_skip_ad', true);
@@ -114,7 +116,7 @@
     let bseas_panel_pos_preset = GM_getValue('bseas_panel_pos_preset', 'top-right');
     let bseas_confirm_chars = GM_getValue('bseas_confirm_chars', 20000);
     let bseas_confirm_enabled = GM_getValue('bseas_confirm_enabled', true);
-    let bseas_ai_evaluation = GM_getValue('bseas_ai_evaluation', false);
+    let bseas_ai_evaluation = GM_getValue('bseas_ai_evaluation', true);
     // 评论条数少于该阈值时视为无参考价值，不参与舆论分析
     const MIN_OPINION_COMMENTS = 10;
     let bseas_update_mode = GM_getValue('bseas_update_mode', 'reduced');
@@ -337,6 +339,8 @@ ${d.overviewWord}概括视频核心主题。
         return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
     const ASK_ICON_SVG = '<svg class="bseas-qa-icon" viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>';
+    // 品牌图标：主色三层折角图形，透明底色；viewBox 按图形实际边界裁切，便于精确控制与相邻文字的间距
+    const BRAND_ICON_SVG = '<svg class="bseas-brand-icon" viewBox="170.71 197.82 602.04 657.58" xmlns="http://www.w3.org/2000/svg"><path d="M381.315184 444.782806l391.427821-227.557254v466.200199a174.89003 174.89003 0 0 1-89.673871 152.728836l-27.500258 15.339622V392.141055L470.046567 498.275343l-88.731383-53.492537z" fill="#25558B"/><path d="M619.061493 581.489353L381.315184 444.777711l391.432916-227.552159-37.760637-19.410149a174.895124 174.895124 0 0 0-166.937473 3.841274L170.707423 429.494129l444.95602 258.975204 3.39805-106.985074z" fill="#5191D9"/><path d="M170.707423 429.499224v50.512239a174.89003 174.89003 0 0 0 89.200079 152.458826l396.507065 222.865194v-463.194428l-97.92191 55.535443v206.669691L170.707423 429.499224z" fill="#97BDE8"/></svg>';
     let katexCSSInjected = false;
     function injectKatexCSS() {
         if (katexCSSInjected) return;
@@ -409,6 +413,8 @@ ${d.overviewWord}概括视频核心主题。
         }
         .bseas-trigger-btn:active { transform: scale(0.94); }
         .bseas-trigger-btn svg { width:26px; height:26px; fill: var(--bseas-primary); stroke:rgba(255,255,255,0.85); stroke-width:4; paint-order:stroke; stroke-linejoin:round; transition: transform 0.55s var(--ease-spring), fill 0.3s; pointer-events:none; }
+        .bseas-trigger-btn svg.bseas-brand-icon { height:30px; width:auto; fill:none; stroke:none; }
+        .bseas-trigger-btn svg.bseas-brand-icon * { stroke:none; }
         .bseas-trigger-btn:hover svg { transform: scale(1.15); }
         .bseas-trigger-btn::after {
             content:''; position:absolute; inset:-2px; border-radius:22px;
@@ -482,6 +488,9 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-header { padding:10px 22px 6px; border-bottom:1px solid var(--bseas-border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
         .bseas-header-text { cursor:move; flex:1; min-width:0; }
         .bseas-title { font-size:16px; font-weight:700; color:var(--bseas-text); margin:0; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .bseas-title-row { display:flex; align-items:center; gap:6px; min-width:0; }
+        .bseas-title-icon { flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+        .bseas-title-icon svg { height:17px; width:auto; display:block; }
         .bseas-subtitle-info { font-size:13px; color:var(--bseas-text-dim); margin-top:2px; font-weight:500; transition:color 0.3s; }
         .bseas-ad-hint { font-size:12px; color:var(--bseas-text-muted); margin-top:1px; font-weight:400; display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
         .bseas-header-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
@@ -496,15 +505,13 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-update-badge-close { display:inline-flex; align-items:center; justify-content:center; margin-left:4px; width:16px; height:16px; border-radius:50%; background:rgba(255,255,255,0.25); cursor:pointer; }
         .bseas-update-badge-close:hover { background:rgba(255,255,255,0.45); }
         .bseas-correct-btns { display:flex; gap:8px; width:100%; margin-top:6px; }
-        .bseas-correct-op { display:flex; align-items:center; justify-content:center; gap:6px; flex:1; min-width:0; color:white; background:var(--bseas-primary); border:none; padding:6px 14px; border-radius:20px; cursor:pointer; position:relative; overflow:hidden; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 1px 3px rgba(0,0,0,0.04); font-size:13px; font-weight:500; }
+        .bseas-correct-op { display:flex; align-items:center; justify-content:center; gap:6px; flex:1; min-width:0; color:var(--bseas-text); background:#ffffff; border:1px solid var(--bseas-border); padding:6px 14px; border-radius:20px; cursor:pointer; position:relative; overflow:hidden; transition:all 0.25s cubic-bezier(0.4,0,0.2,1); box-shadow:0 1px 3px rgba(0,0,0,0.04); font-size:13px; font-weight:500; }
         .bseas-correct-op > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .bseas-correct-op.edit { background:white; color:var(--bseas-text); border:1px solid var(--bseas-border); }
-        .bseas-correct-op:hover { transform:translateY(-2px); box-shadow:0 4px 14px rgba(0,174,236,0.2); }
-        .bseas-correct-op.edit:hover { border-color:var(--bseas-primary); color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.1); }
+        .bseas-correct-op:hover { transform:translateY(-2px); border-color:var(--bseas-primary); color:var(--bseas-primary); box-shadow:0 4px 14px rgba(0,174,236,0.1); }
         .bseas-correct-op:active { transform:translateY(0); }
         .bseas-correct-op.loading { opacity:0.6; pointer-events:none; }
         .bseas-correct-op.disabled { opacity:0.45; filter:grayscale(60%); cursor:not-allowed; }
-        .bseas-correct-progress { position:absolute; left:0; top:0; height:100%; width:0%; background:rgba(255,255,255,0.25); pointer-events:none; }
+        .bseas-correct-progress { position:absolute; left:0; top:0; height:100%; width:0%; background:rgba(0,174,236,0.16); pointer-events:none; }
         .bseas-edit-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:100020; display:flex; align-items:center; justify-content:center; animation:bseas-fadein 0.2s ease; }
         .bseas-edit-overlay.closing { animation:bseas-fadeout 0.2s ease forwards; }
         @keyframes bseas-fadein { from{opacity:0} to{opacity:1} }
@@ -742,6 +749,19 @@ ${d.overviewWord}概括视频核心主题。
         .bseas-retry-btn svg { width:16px; height:16px; fill:currentColor; transition:transform 0.4s ease; }
         .bseas-retry-btn:hover svg { transform:rotate(180deg) scale(1.1); }
         .bseas-ai-result { background:white; border-radius:var(--bseas-radius-md); padding:24px; margin-bottom:16px; border:1px solid var(--bseas-border); color:var(--bseas-text); line-height:1.8; font-size:15px; transition:box-shadow 0.2s; }
+        .bseas-think { margin:0 0 8px; }
+        .bseas-think-head { display:flex; align-items:center; gap:6px; cursor:pointer; padding:2px 0; font-size:13px; color:var(--bseas-text-dim); transition:color 0.2s; user-select:none; }
+        .bseas-think-head:hover { color:var(--bseas-text); }
+        .bseas-think-chevron { width:12px; height:12px; flex-shrink:0; transition:transform 0.28s var(--ease-out); }
+        .bseas-think.open .bseas-think-chevron { transform:rotate(90deg); }
+        .bseas-think-label { font-weight:500; }
+        .bseas-think-dot { width:6px; height:6px; border-radius:50%; background:var(--bseas-primary); opacity:0; flex-shrink:0; }
+        .bseas-think:not(.done) .bseas-think-dot { opacity:1; animation:bseas-think-blink 1.2s ease-in-out infinite; }
+        .bseas-think-wrap { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows 0.3s var(--ease-out), opacity 0.22s ease; }
+        .bseas-think.open .bseas-think-wrap { grid-template-rows:1fr; opacity:1; }
+        .bseas-think-clip { min-height:0; overflow:hidden; }
+        .bseas-think-body { max-height:240px; overflow-y:auto; padding:2px 0 6px 18px; border-left:2px solid var(--bseas-border); color:var(--bseas-text-muted); font-size:13px; line-height:1.75; white-space:pre-wrap; word-break:break-word; }
+        @keyframes bseas-think-blink { 0%, 100% { opacity:1; } 50% { opacity:0.2; } }
         .bseas-ai-result.stretch { flex:1; min-height:0; overflow-y:auto; margin-bottom:0; }
         .bseas-ai-result:hover { box-shadow:0 4px 12px rgba(0,0,0,0.04); }
         .bseas-stale-hint { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--bseas-text-muted); margin:0 0 10px; cursor:pointer; user-select:none; }
@@ -963,6 +983,8 @@ ${d.overviewWord}概括视频核心主题。
     let currentStreamText = '';
     let currentFollowupQ = null;
     let currentFollowupText = '';
+    // 当前视频最近一次摘要的思考过程文本，供分析完成后仍可回看
+    let lastSummaryReasoning = '';
     let progressMarkInitialized = false;
     let lastAdCheckResult = null;
     let adDetectionNotified = false;
@@ -971,6 +993,21 @@ ${d.overviewWord}概括视频核心主题。
     let updateLinkUrl = null;
     let currentAbortController = null;
     let currentGMXHR = null;
+    // 思考模式能力登记：off 表示该平台/模型接受关闭思考，on 表示服务端强制思考
+    let thinkingCapability = GM_getValue('bseas_thinking_capability', {}) || {};
+    function thinkingCapabilityKey() { return `${bseas_platform}|${bseas_model.replace(' (免费)', '')}|${bseas_api_url}`; }
+    function thinkingDisableAllowed() { return thinkingCapability[thinkingCapabilityKey()] !== 'on'; }
+    function rememberThinkingCapability(state) {
+        const key = thinkingCapabilityKey();
+        if (thinkingCapability[key] === state) return;
+        thinkingCapability[key] = state;
+        GM_setValue('bseas_thinking_capability', thinkingCapability);
+    }
+    // 关闭思考被拒的判定：参数或模型能力类 4xx，且错误信息指向思考相关字段
+    function isThinkingParamRejection(status, body) {
+        if (status !== 400 && status !== 422) return false;
+        return /thinking|reasoning|thought|budget/i.test(String(body || ''));
+    }
     let subtitleSearchKeyword = '';
     let expandedSearch = false;
     // 浏览页列表当前已渲染条数（按 PREVIEW_BATCH_SIZE 分批增量追加）
@@ -994,10 +1031,10 @@ ${d.overviewWord}概括视频核心主题。
         const result = {};
         for (const key of Object.keys(raw)) {
             const val = raw[key];
-            // sig 必须随条目一起保留：丢失会导致每次刷新后都被误判为“版本或设置变更”
-            if (typeof val === 'string') result[key] = { prompt: '', summary: val, qa: [], ts: 0, sig: '' };
+            // sig 与 reasoning 必须随条目一起保留：丢失 sig 会误判缓存过期，丢失 reasoning 会让思考入口消失
+            if (typeof val === 'string') result[key] = { prompt: '', summary: val, qa: [], reasoning: '', ts: 0, sig: '' };
             else if (val && typeof val === 'object' && typeof val.summary === 'string') {
-                result[key] = { prompt: typeof val.prompt === 'string' ? val.prompt : '', summary: val.summary, qa: Array.isArray(val.qa) ? val.qa : [], ts: typeof val.ts === 'number' ? val.ts : 0, sig: typeof val.sig === 'string' ? val.sig : '' };
+                result[key] = { prompt: typeof val.prompt === 'string' ? val.prompt : '', summary: val.summary, qa: Array.isArray(val.qa) ? val.qa : [], reasoning: typeof val.reasoning === 'string' ? val.reasoning : '', ts: typeof val.ts === 'number' ? val.ts : 0, sig: typeof val.sig === 'string' ? val.sig : '' };
             }
         }
         return result;
@@ -1005,6 +1042,7 @@ ${d.overviewWord}概括视频核心主题。
     function getCachedPrompt(videoKey) { const e = aiSummaryCache[videoKey]; return (!e || typeof e === 'string') ? null : (e.prompt || ''); }
     function getCachedSummary(videoKey) { const e = aiSummaryCache[videoKey]; if (!e) return null; return typeof e === 'string' ? e : (e.summary || null); }
     function getCachedQA(videoKey) { const e = aiSummaryCache[videoKey]; return (!e || typeof e === 'string') ? [] : (Array.isArray(e.qa) ? e.qa : []); }
+    function getCachedReasoning(videoKey) { const e = aiSummaryCache[videoKey]; return (!e || typeof e === 'string') ? '' : (typeof e.reasoning === 'string' ? e.reasoning : ''); }
     // 影响 AI 返回内容的设置项签名：版本或任一设置变化即视为缓存结果已过时。
     // 仅纳入真正进入提示词或影响输出内容的项；广告自动跳过、禁用 API 等行为开关不改变输出，纳入会引发误报
     function aiOutputSignature() {
@@ -1014,6 +1052,7 @@ ${d.overviewWord}概括视频核心主题。
             'opinion:' + (bseas_opinion_analysis ? 1 : 0),
             'opinionCount:' + bseas_opinion_comments_count,
             'aiEval:' + (bseas_ai_evaluation ? 1 : 0),
+            'thinking:' + (bseas_deep_thinking ? 1 : 0),
             'model:' + bseas_platform + '/' + bseas_model
         ].join('|');
     }
@@ -1024,10 +1063,15 @@ ${d.overviewWord}概括视频核心主题。
         if (!e.sig) return false;
         return e.sig !== aiOutputSignature();
     }
-    function setCachedSummary(videoKey, prompt, summary) {
+    // 单条缓存保存的思考内容上限，避免单条记录占用过多存储
+    const MAX_CACHED_REASONING_CHARS = 24000;
+    function setCachedSummary(videoKey, prompt, summary, reasoning) {
         const existing = aiSummaryCache[videoKey];
         const qa = (existing && Array.isArray(existing.qa)) ? existing.qa : [];
-        aiSummaryCache[videoKey] = { prompt, summary, qa, sig: aiOutputSignature(), ts: Date.now() };
+        const prevReasoning = (existing && typeof existing === 'object' && typeof existing.reasoning === 'string') ? existing.reasoning : '';
+        let reasoningText = reasoning != null ? String(reasoning) : prevReasoning;
+        if (reasoningText.length > MAX_CACHED_REASONING_CHARS) reasoningText = reasoningText.slice(0, MAX_CACHED_REASONING_CHARS);
+        aiSummaryCache[videoKey] = { prompt, summary, qa, reasoning: reasoningText, sig: aiOutputSignature(), ts: Date.now() };
         GM_setValue('aiSummaryCache', aiSummaryCache);
     }
     function overwriteCachedAdAsNone(videoKey) {
@@ -1429,13 +1473,16 @@ ${d.overviewWord}概括视频核心主题。
             return seg;
         }).join('');
         // 相邻扇区之间叠加细白分割线 避免交界处有视觉立体高度感
+        // 分割线放在每个可见扇区的起始角度上：零宽扇区不占线段，但其两侧的可见扇区仍需分隔
+        const visibleCount = OPINION_CHART_KEYS.filter(k => (data[k] || 0) > 0).length;
         const boundaries = [];
-        for (let i = 0; i < OPINION_CHART_KEYS.length; i++) {
-            const prevKey = OPINION_CHART_KEYS[(i - 1 + OPINION_CHART_KEYS.length) % OPINION_CHART_KEYS.length];
-            const nextKey = OPINION_CHART_KEYS[i];
-            // 交界两侧任一扇区为零宽时不画线
-            if ((data[prevKey] || 0) <= 0 || (data[nextKey] || 0) <= 0) continue;
-            boundaries.push(OPINION_CHART_KEYS.slice(0, i).reduce((s, kk) => s + (data[kk] || 0), 0));
+        if (visibleCount > 1) {
+            let pos = 0;
+            for (const k of OPINION_CHART_KEYS) {
+                const v = data[k] || 0;
+                if (v > 0) boundaries.push(pos);
+                pos += v;
+            }
         }
         const dividers = boundaries.map(p => {
             const pos = C * p / 100;
@@ -1709,10 +1756,13 @@ ${d.overviewWord}概括视频核心主题。
         const actualModel = (overrides.model !== undefined ? overrides.model : bseas_model).replace(' (免费)', '');
         const isClaude = reqUrl.includes('anthropic.com');
         const isGemini = reqUrl.includes('generativelanguage.googleapis.com');
+        // 深度思考关闭时主动跳过思考阶段以缩短首字延迟；服务端强制思考的模型由失败登记后转为默认请求
+        const disableThinking = !bseas_deep_thinking && overrides.thinking !== 'keep' && thinkingDisableAllowed();
         let fetchUrl = reqUrl;
         const safeApiKey = reqKey.replace(/[^\x20-\x7E]/g, '');
         const headers = { 'Content-Type': 'application/json' };
         let bodyData = {};
+        let thinkingDisabled = false;
         if (isClaude) {
             headers['x-api-key'] = safeApiKey;
             headers['anthropic-version'] = '2023-06-01';
@@ -1728,26 +1778,41 @@ ${d.overviewWord}概括视频核心主题。
                 fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${safeApiKey}`;
             }
             bodyData = { contents: messages.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })) };
+            if (disableThinking) { bodyData.generationConfig = { thinkingConfig: { thinkingBudget: 0 } }; thinkingDisabled = true; }
         } else {
             headers['Authorization'] = `Bearer ${safeApiKey}`;
             if (stream) headers['Accept'] = 'text/event-stream';
             bodyData = { model: actualModel, messages: messages };
             if (stream) bodyData.stream = true;
+            if (disableThinking) {
+                if (reqUrl.includes('api.openai.com')) bodyData.reasoning_effort = 'none';
+                else bodyData.thinking = { type: 'disabled' };
+                thinkingDisabled = true;
+            }
         }
-        return { fetchUrl, headers, bodyData, isClaude, isGemini };
+        return { fetchUrl, headers, bodyData, isClaude, isGemini, thinkingDisabled };
     }
-    async function callAPIStream(messages, onChunk) {
-        const { fetchUrl, headers, bodyData, isClaude, isGemini } = buildAPIRequest(messages, true);
+    async function callAPIStream(messages, onChunk, attempt = 0) {
+        const req = buildAPIRequest(messages, true);
+        const { fetchUrl, headers, bodyData, isClaude, isGemini } = req;
         currentAbortController = new AbortController();
         const resp = await fetch(fetchUrl, { method: 'POST', headers, body: JSON.stringify(bodyData), signal: currentAbortController.signal });
         if (!resp.ok) {
+            const rawText = await resp.text().catch(() => '');
+            // 关闭思考被拒时登记为强制思考，并以默认参数重发一次
+            if (req.thinkingDisabled && attempt === 0 && isThinkingParamRejection(resp.status, rawText)) {
+                rememberThinkingCapability('on');
+                return callAPIStream(messages, onChunk, 1);
+            }
+            let apiMsg = '';
+            try { const d = JSON.parse(rawText); apiMsg = d?.error?.message || d?.message || ''; } catch (e) {}
             const errMap = { 401:'HTTP 401 (未授权，请检查API Key)', 403:'HTTP 403 (禁止访问)', 404:'HTTP 404 (请核对URL与模型名)', 408:'HTTP 408 (请求超时)', 413:'HTTP 413 (请求体过大)', 429:'HTTP 429 (请求频率过高)', 500:'HTTP 500 (AI服务内部异常)', 502:'HTTP 502 (网关错误)', 503:'HTTP 503 (服务不可用)' };
-            throw new Error(errMap[resp.status] || `HTTP ${resp.status}`);
+            throw new Error(errMap[resp.status] || `HTTP ${resp.status}${apiMsg ? '：' + apiMsg.slice(0, 120) : ''}`);
         }
         if (!resp.body) throw new Error('不支持流式响应');
         const reader = resp.body.getReader();
         const dec = new TextDecoder('utf-8');
-        let buf = '', full = '';
+        let buf = '', full = '', reasoning = '';
         let lastChunkTime = Date.now();
         const idleTimer = setInterval(() => {
             if (Date.now() - lastChunkTime > 90000) { try { reader.cancel('idle timeout'); } catch (e) {} }
@@ -1769,11 +1834,24 @@ ${d.overviewWord}概括视频核心主题。
                         if (!isClaude && ds === '[DONE]') return full;
                         try {
                             const d = JSON.parse(ds);
-                            let chunk = '';
-                            if (isGemini) chunk = d.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                            else if (isClaude) { if (d.type === 'content_block_delta') chunk = d.delta?.text || ''; else if (d.type === 'message_stop') return full; }
-                            else chunk = d.choices?.[0]?.delta?.content || '';
-                            if (chunk) { full += chunk; onChunk(full); }
+                            let chunk = '', thought = '';
+                            if (isGemini) {
+                                const parts = d.candidates?.[0]?.content?.parts || [];
+                                for (const p of parts) {
+                                    if (!p || typeof p.text !== 'string') continue;
+                                    if (p.thought) thought += p.text; else chunk += p.text;
+                                }
+                            } else if (isClaude) {
+                                if (d.type === 'content_block_delta') {
+                                    if (d.delta?.type === 'thinking_delta') thought = d.delta.thinking || '';
+                                    else chunk = d.delta?.text || '';
+                                } else if (d.type === 'message_stop') return full;
+                            } else {
+                                chunk = d.choices?.[0]?.delta?.content || '';
+                                thought = d.choices?.[0]?.delta?.reasoning_content || d.choices?.[0]?.delta?.reasoning || '';
+                            }
+                            if (thought) { reasoning += thought; onChunk(full, reasoning); }
+                            if (chunk) { full += chunk; onChunk(full, reasoning); }
                         } catch (e) {}
                     }
                 }
@@ -1787,15 +1865,22 @@ ${d.overviewWord}概括视频核心主题。
         }
         return full;
     }
-    function callAPINoStream(messages) {
+    function callAPINoStream(messages, attempt = 0) {
         return new Promise((resolve, reject) => {
-            const { fetchUrl, headers, bodyData, isClaude, isGemini } = buildAPIRequest(messages, false);
+            const req = buildAPIRequest(messages, false);
+            const { fetchUrl, headers, bodyData, isClaude, isGemini } = req;
             currentGMXHR = GM_xmlhttpRequest({
                 method: 'POST', url: fetchUrl, headers, data: JSON.stringify(bodyData), timeout: 60000,
                 onload(r) {
                     currentGMXHR = null;
                     if (r.status === 401) return reject(new Error('HTTP 401 (未授权)'));
                     if (r.status === 429) return reject(new Error('HTTP 429 (请求频率过高)'));
+                    // 关闭思考被拒时登记为强制思考，并以默认参数重发一次
+                    if (req.thinkingDisabled && attempt === 0 && isThinkingParamRejection(r.status, r.responseText)) {
+                        rememberThinkingCapability('on');
+                        callAPINoStream(messages, 1).then(resolve, reject);
+                        return;
+                    }
                     try {
                         const d = JSON.parse(r.responseText);
                         if (d.error) return reject(new Error(d.error.message || JSON.stringify(d.error)));
@@ -1951,55 +2036,127 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const list = getUserSubtitlesList(videoKey).filter(s => s.id !== id);
         GM_setValue(userSubsKey(videoKey), list);
     }
+    // 思考过程：与正文同处一个容器，折叠展示；进行中显示「思考中...」，结束后显示「思考完成」
+    function createThinkingBlock(reasoning, phase, open) {
+        const done = phase === 'done';
+        const box = document.createElement('div');
+        box.className = 'bseas-think' + (done ? ' done' : '') + (open ? ' open' : '');
+        safeSetInnerHTML(box, `<div class="bseas-think-head" role="button" tabindex="0" aria-expanded="${open ? 'true' : 'false'}"><svg class="bseas-think-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg><span class="bseas-think-label">${done ? '思考完成' : '思考中...'}</span><span class="bseas-think-dot"></span></div><div class="bseas-think-wrap"><div class="bseas-think-clip"><div class="bseas-think-body"></div></div></div>`);
+        box.querySelector('.bseas-think-body').textContent = reasoning;
+        const head = box.querySelector('.bseas-think-head');
+        const toggle = () => {
+            const next = !box.classList.contains('open');
+            box.classList.toggle('open', next);
+            head.setAttribute('aria-expanded', next ? 'true' : 'false');
+        };
+        head.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggle(); });
+        head.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+        return box;
+    }
+    // 摘要被其他渲染路径整体重绘后，把思考区重新放回顶部
+    function prependThinking(el, reasoningText) {
+        if (!el || !reasoningText) return;
+        el.insertBefore(createThinkingBlock(reasoningText, 'done', false), el.firstChild);
+    }
+    // 末尾若只有未写完的 markdown 标记（标题符号、未闭合的加粗符号），流式渲染时先隐去
+    function trimPartialMarkdownTail(text) {
+        if (!text) return '';
+        let t = text.replace(/(^|\n)(#{1,6})[ \t]*$/, '$1');
+        const markerCount = (s, m) => s.split(m).length - 1;
+        if (markerCount(t, '**') % 2 === 1) t = t.replace(/\*\*[ \t]*$/, '');
+        if (markerCount(t, '__') % 2 === 1) t = t.replace(/__[ \t]*$/, '');
+        return t;
+    }
     function createThrottledRenderer(el, options) {
         options = options || {};
         const shouldRender = options.shouldRender || (() => true);
-        const autoScroll = !!options.autoScroll;
         const throttleMs = options.throttleMs != null ? options.throttleMs : 80;
         let lastRenderTime = 0;
-        let pendingText = null;
+        let pending = null;
         let timerId = null;
         let targetEl = el;
-        function doRender(text) {
-            if (!shouldRender()) return;
+        let answerEl = null;
+        let thinkEl = null;
+        let lastText = null;
+        let lastReasoning = null;
+        // 结构只铺设一次：思考区与正文节点保持稳定，流式刷新只更新其内容
+        function bindTarget() {
             if (targetEl.id && !document.body.contains(targetEl)) {
                 const fresh = document.getElementById(targetEl.id);
-                if (fresh) targetEl = fresh; else return;
-            } else if (!document.body.contains(targetEl)) return;
-            safeSetInnerHTML(targetEl, markdownToHtml(text));
-            renderLatex(targetEl, text);
-            if (autoScroll) targetEl.scrollTop = targetEl.scrollHeight;
+                if (!fresh) return false;
+                targetEl = fresh;
+                answerEl = null; thinkEl = null; lastText = null; lastReasoning = null;
+            } else if (!document.body.contains(targetEl)) return false;
+            if (answerEl && answerEl.parentNode === targetEl) return true;
+            safeSetInnerHTML(targetEl, '');
+            answerEl = document.createElement('div');
+            answerEl.className = 'bseas-answer-body';
+            targetEl.appendChild(answerEl);
+            thinkEl = null; lastText = null; lastReasoning = null;
+            return true;
+        }
+        function doRender(text, reasoning, phase) {
+            if (!shouldRender()) return;
+            if (!bindTarget()) return;
+            if (reasoning) {
+                if (!thinkEl) {
+                    thinkEl = createThinkingBlock(reasoning, phase, false);
+                    targetEl.insertBefore(thinkEl, answerEl);
+                    lastReasoning = reasoning;
+                } else if (lastReasoning !== reasoning) {
+                    const bodyEl = thinkEl.querySelector('.bseas-think-body');
+                    const atBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 24;
+                    bodyEl.textContent = reasoning;
+                    if (atBottom) bodyEl.scrollTop = bodyEl.scrollHeight;
+                    lastReasoning = reasoning;
+                }
+                thinkEl.classList.toggle('done', phase === 'done');
+                const label = thinkEl.querySelector('.bseas-think-label');
+                const want = phase === 'done' ? '思考完成' : '思考中...';
+                if (label.textContent !== want) label.textContent = want;
+            } else if (thinkEl) {
+                thinkEl.remove();
+                thinkEl = null;
+                lastReasoning = null;
+            }
+            if (lastText !== text) {
+                // 流式过程中末尾可能只有尚未写完的 markdown 标记，先隐去以免闪出 ## 等符号
+                const shownText = phase === 'done' ? text : trimPartialMarkdownTail(text);
+                safeSetInnerHTML(answerEl, markdownToHtml(shownText));
+                renderLatex(answerEl, shownText);
+                lastText = text;
+            }
         }
         function flush() {
             timerId = null;
-            if (pendingText === null) return;
-            const text = pendingText;
-            pendingText = null;
+            if (pending === null) return;
+            const item = pending;
+            pending = null;
             lastRenderTime = Date.now();
-            doRender(text);
+            doRender(item.text, item.reasoning, item.phase);
         }
         return {
-            update(text) {
-                pendingText = text;
+            update(text, reasoning) {
+                pending = { text: text, reasoning: reasoning || '', phase: 'thinking' };
                 const now = Date.now();
                 const elapsed = now - lastRenderTime;
                 if (elapsed >= throttleMs) {
                     lastRenderTime = now;
-                    pendingText = null;
-                    doRender(text);
+                    pending = null;
+                    doRender(text, reasoning || '', 'thinking');
                 } else if (timerId === null) {
                     timerId = setTimeout(flush, throttleMs - elapsed);
                 }
             },
-            finalize(text) {
+            finalize(text, reasoning) {
                 if (timerId !== null) { clearTimeout(timerId); timerId = null; }
-                pendingText = null;
+                pending = null;
                 lastRenderTime = Date.now();
-                doRender(text);
+                doRender(text, reasoning || '', 'done');
             },
             cancel() {
                 if (timerId !== null) { clearTimeout(timerId); timerId = null; }
-                pendingText = null;
+                pending = null;
             }
         };
     }
@@ -2009,20 +2166,23 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
     async function generateAISummaryStream(subtitleText, streamEl, shouldRender) {
         const fullPrompt = buildFullPrompt(subtitleText);
         const messages = [{ role: 'user', content: fullPrompt }];
-        const renderer = createThrottledRenderer(streamEl, { autoScroll: true, shouldRender: shouldRender || (() => true) });
-        let summary = await callAPIStream(messages, text => { currentStreamText = text; renderer.update(text); });
-        renderer.finalize(summary);
+        const renderer = createThrottledRenderer(streamEl, { shouldRender: shouldRender || (() => true) });
+        let reasoningText = '';
+        let summary = await callAPIStream(messages, (text, reasoning) => { currentStreamText = text; reasoningText = reasoning || ''; renderer.update(text, reasoningText); });
+        renderer.finalize(summary, reasoningText);
+        lastSummaryReasoning = reasoningText;
         currentStreamText = '';
         let adCheck = extractAdSegments(summary);
         lastAdCheckResult = adCheck;
 
-        setCachedSummary(currentVideoKey, fullPrompt, summary);
+        setCachedSummary(currentVideoKey, fullPrompt, summary, reasoningText);
         aiConversationHistory = [{ role: 'user', content: fullPrompt, fullContent: fullPrompt }, { role: 'assistant', content: summary }];
         adSegments = adCheck.segments;
         if (adSegments.length > 0) { initProgressMark(); initAdSkipMonitor(); notifyAdDetected(); }
 
         if (adCheck.type === 'error') {
             safeSetInnerHTML(streamEl, markdownToHtml(summary) + '<div style="margin-top:14px;color:#f59e0b;font-size:13px;display:flex;align-items:center;gap:6px;"><div class="bseas-spinner" style="width:14px;height:14px;border-width:2px;"></div>格式校验修正中...</div>');
+            prependThinking(streamEl, reasoningText);
             messages.push({ role: 'assistant', content: summary });
             messages.push({ role: 'user', content: '你没有正确输出广告时间。请输出一行：有广告输出"[AD]广告时间[MM:SS - MM:SS]"，没广告输出"[AD]广告时间[无]"。只输出这一行，不含其他任何内容。必须在同一行。' });
             try {
@@ -2031,6 +2191,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 adCheck = extractAdSegments(summary);
                 lastAdCheckResult = adCheck;
                 renderAISummaryInto(streamEl, summary);
+                prependThinking(streamEl, reasoningText);
                 setCachedSummary(currentVideoKey, fullPrompt, summary);
                 aiConversationHistory[1].content = summary;
                 adSegments = adCheck.segments;
@@ -2040,6 +2201,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
 
         if (opinionChartExpected() && extractOpinionChart(summary).status !== 'ok') {
             safeSetInnerHTML(streamEl, markdownToHtml(stripOpinionChartLines(summary).text) + '<div style="margin-top:14px;color:#f59e0b;font-size:13px;display:flex;align-items:center;gap:6px;"><div class="bseas-spinner" style="width:14px;height:14px;border-width:2px;"></div>舆论图格式校验修正中...</div>');
+            prependThinking(streamEl, reasoningText);
             messages.push({ role: 'assistant', content: summary });
             messages.push({ role: 'user', content: OPINION_CHART_FIX_PROMPT });
             try {
@@ -2050,6 +2212,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 const fixedBlock = OPINION_CHART_KEYS.map(k => `[${k}]:${fixedValues[k]}`).join('\n');
                 summary = insertOpinionChartBlock(stripOpinionChartLines(summary).text, fixedBlock);
                 renderAISummaryInto(streamEl, summary);
+                prependThinking(streamEl, reasoningText);
                 setCachedSummary(currentVideoKey, fullPrompt, summary);
                 if (aiConversationHistory[1]) aiConversationHistory[1].content = summary;
             } catch (e) {}
@@ -2068,6 +2231,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             currentStreamText = '';
             currentFollowupQ = null;
             currentFollowupText = '';
+            lastSummaryReasoning = '';
             if (autoGenerateTimer) { clearTimeout(autoGenerateTimer); autoGenerateTimer = null; }
         }
         currentVideoKey = vk;
@@ -2215,7 +2379,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             if (!hotComments.length) { try { hotComments = await fetchHotComments(); } catch (e) {} }
             const prompt = buildCorrectSubtitlePrompt();
             const messages = [{ role: 'user', content: prompt }];
-            const resp = await callAPIStream(messages, text => updateCorrectProgress(text.length));
+            const resp = await callAPIStream(messages, (text, reasoning) => updateCorrectProgress(text.length + (reasoning ? reasoning.length * 0.25 : 0)));
             const parsed = parseCorrectedSubtitleJSON(resp);
             if (!parsed || parsed.length !== originalBody.length) throw new Error('修正条目数不匹配，请重试');
             const body = parsed.map((it, i) => ({ from: originalBody[i].from, to: originalBody[i].to, content: it.content }));
@@ -2544,11 +2708,11 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         c.className = 'bseas-container';
         const showApiWarning = !bseas_api_key && !bseas_disable_api;
         safeSetInnerHTML(c, `
-            <button class="bseas-trigger-btn" title="B站字幕获取、AI分析及广告跳过工具（可拖拽）"><svg viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6zm10 0h2v2h-2zm-6-4h8v2h-8z"/></svg><span class="bseas-status-dot"></span></button>
+            <button class="bseas-trigger-btn" title="B站字幕获取、AI分析及广告跳过工具（可拖拽）">${BRAND_ICON_SVG}<span class="bseas-status-dot"></span></button>
             <div class="bseas-panel">
                 <div class="bseas-content"><div class="bseas-sticky-top"><div class="bseas-header">
                     <div class="bseas-header-text">
-                        <div class="bseas-title">B站字幕获取、AI分析及广告跳过</div>
+                        <div class="bseas-title-row"><span class="bseas-title-icon">${BRAND_ICON_SVG}</span><div class="bseas-title">B站字幕获取、AI分析及广告跳过</div></div>
                         <div class="bseas-subtitle-info">点击刷新</div>
                         <div class="bseas-ad-hint" id="bseas-ad-hint">广告跳过功能仅在进行AI分析后可用</div>
                     </div>
@@ -2872,6 +3036,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         bseas_model = selectedModel === '自定义' ? (customModel || bseas_model) : (selectedModel || bseas_model);
         bseas_auto_summary = chk('bseas-s-auto', bseas_auto_summary);
         bseas_opinion_analysis = chk('bseas-s-opinion', bseas_opinion_analysis);
+        bseas_deep_thinking = chk('bseas-s-deep-thinking', bseas_deep_thinking);
         bseas_auto_skip_ad = chk('bseas-s-auto-skip', bseas_auto_skip_ad);
         bseas_auto_open_panel = chk('bseas-s-auto-open', bseas_auto_open_panel);
         bseas_auto_open_tab = val('bseas-s-auto-tab', bseas_auto_open_tab);
@@ -2892,6 +3057,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         GM_setValue('bseas_model', bseas_model);
         GM_setValue('bseas_auto_summary', bseas_auto_summary);
         GM_setValue('bseas_opinion_analysis', bseas_opinion_analysis);
+        GM_setValue('bseas_deep_thinking', bseas_deep_thinking);
         GM_setValue('bseas_auto_skip_ad', bseas_auto_skip_ad);
         GM_setValue('bseas_auto_open_panel', bseas_auto_open_panel);
         GM_setValue('bseas_auto_open_tab', bseas_auto_open_tab);
@@ -2948,14 +3114,17 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 if (allSubtitles.length === 0) fetchAllSubtitles();
             }
         });
-        if (_documentClickHandler) document.removeEventListener('click', _documentClickHandler);
+        if (_documentClickHandler) window.removeEventListener('click', _documentClickHandler, true);
+        // 评论区等站内组件会在自身内部阻止事件冒泡，冒泡阶段收不到点击；
+        // 改为在 window 捕获阶段监听，并沿合成路径判断点击是否落在面板内
         _documentClickHandler = e => {
             if (!panelVisible) return;
-            if (c.contains(e.target)) return;
-            if (e.target.closest && e.target.closest('.bseas-edit-overlay')) return;
+            const path = typeof e.composedPath === 'function' ? e.composedPath() : null;
+            if (path ? path.includes(c) : c.contains(e.target)) return;
+            if (path ? path.some(n => n && n.classList && n.classList.contains('bseas-edit-overlay')) : (e.target.closest && e.target.closest('.bseas-edit-overlay'))) return;
             closePanelWithAnim();
         };
-        document.addEventListener('click', _documentClickHandler);
+        window.addEventListener('click', _documentClickHandler, true);
         c.querySelector('#bseas-source-toggle').addEventListener('click', (e) => {
             e.stopPropagation();
             sourceCollapsed = !sourceCollapsed;
@@ -3675,12 +3844,12 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 const showCorrectBtn = currentSubtitleData?.body?.length && currentSubtitleData?.id !== 'ai-corrected' && !currentSubtitleData?.isUserEdited;
                 let btnsHtml = '<div class="bseas-correct-btns">';
                 if (showEditBtn) {
-                    btnsHtml += `<div class="bseas-correct-op edit" id="bseas-edit-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg><span>编辑字幕</span></div>`;
+                    btnsHtml += `<div class="bseas-correct-op" id="bseas-edit-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg><span>编辑字幕</span></div>`;
                 }
                 if (showCorrectBtn) {
                     btnsHtml += `<div class="bseas-correct-op${bseas_disable_api ? ' disabled' : ''}" id="bseas-ai-correct-btn"${bseas_disable_api ? ' title="此功能在「禁用 API」启用时不可用"' : ''}><div class="bseas-correct-progress"></div><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>AI修正字幕</span></div>`;
                 }
-                btnsHtml += `<div class="bseas-correct-op edit" id="bseas-new-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg><span>导入字幕</span></div>`;
+                btnsHtml += `<div class="bseas-correct-op" id="bseas-new-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg><span>导入字幕</span></div>`;
                 btnsHtml += '</div>';
                 safeSetInnerHTML(sb, optsHtml + btnsHtml);
                 sb.querySelectorAll('.bseas-subtitle-option[data-id]').forEach(o => o.addEventListener('click', (e) => {
@@ -3709,7 +3878,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 document.getElementById('bseas-edit-subtitle-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSubtitleEditor(); });
                 document.getElementById('bseas-new-subtitle-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSRTPasteDialog(); });
             } else {
-                safeSetInnerHTML(sb, '<div style="color:var(--bseas-text-dim);font-size:13px;padding-bottom:8px;">未检测到可用字幕</div><div class="bseas-correct-btns"><div class="bseas-correct-op edit" id="bseas-new-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg><span>导入字幕</span></div></div>');
+                safeSetInnerHTML(sb, '<div style="color:var(--bseas-text-dim);font-size:13px;padding-bottom:8px;">未检测到可用字幕</div><div class="bseas-correct-btns"><div class="bseas-correct-op" id="bseas-new-subtitle-btn"><svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg><span>导入字幕</span></div></div>');
                 document.getElementById('bseas-new-subtitle-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openSRTPasteDialog(); });
             }
         }
@@ -4262,6 +4431,8 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         const cachedPrompt = getCachedPrompt(currentVideoKey);
         const cachedSummary = getCachedSummary(currentVideoKey);
         const cachedQA = getCachedQA(currentVideoKey);
+        // 优先使用本次会话的思考内容，刷新后回退到缓存中的记录
+        const cachedReasoning = lastSummaryReasoning || getCachedReasoning(currentVideoKey);
         if (cachedSummary && (aiConversationHistory.length < 2 || aiConversationHistory[1]?.content !== cachedSummary)) {
             const fallbackPrompt = buildFullPrompt(getTimestampedTextForAI());
             const userPrompt = cachedPrompt || fallbackPrompt;
@@ -4297,7 +4468,9 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             if (showRawAIText) {
                 const userText = cachedPrompt || (aiConversationHistory.length > 0 ? (aiConversationHistory[0].fullContent || aiConversationHistory[0].content) : '');
                 const aiText = aiConversationHistory.length > 1 ? aiConversationHistory[1].content : cachedSummary;
-                html += `<div style="position:relative;"><div style="font-size:13px;font-weight:bold;color:var(--bseas-text);margin-bottom:8px;">发给AI的原始文本：</div><textarea class="bseas-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;margin-bottom:16px;">${escapeHtml(userText)}</textarea><div style="font-size:13px;font-weight:bold;color:var(--bseas-text);margin-bottom:8px;">AI返回的原始文本：</div><textarea class="bseas-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;">${escapeHtml(aiText)}</textarea></div>`;
+                // 思考过程并入返回文本的最开头，以字符分隔行与正文区隔
+                const rawAIText = (cachedReasoning ? `【思考过程】\n${cachedReasoning}\n\n====================\n\n` : '') + (aiText || '');
+                html += `<div style="position:relative;"><div style="font-size:13px;font-weight:bold;color:var(--bseas-text);margin-bottom:8px;">发给AI的原始文本：</div><textarea class="bseas-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;margin-bottom:16px;">${escapeHtml(userText)}</textarea><div style="font-size:13px;font-weight:bold;color:var(--bseas-text);margin-bottom:8px;">AI返回的原始文本：</div><textarea class="bseas-text-area" readonly style="min-height:200px;font-family:monospace;font-size:13px;">${escapeHtml(rawAIText)}</textarea></div>`;
             } else {
                 const adData = lastAdCheckResult || extractAdSegments(cachedSummary);
                 if (!lastAdCheckResult) lastAdCheckResult = adData;
@@ -4315,7 +4488,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 if (cachedQA.length) html += cachedQA.map(qa => `<div class="bseas-qa-item"><div class="bseas-qa-q">${ASK_ICON_SVG}<span>${escapeHtml(qa.q)}</span></div><div class="bseas-qa-a bseas-markdown bseas-qa-md"></div></div>`).join('');
                 if (isGeneratingAI && currentFollowupQ) {
                     const followupHtml = currentFollowupText ? markdownToHtml(currentFollowupText) : '<div style="display:flex;align-items:center;gap:8px;color:var(--bseas-text-muted);"><span class="bseas-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div>';
-                    html += `<div class="bseas-qa-item"><div class="bseas-qa-q">${ASK_ICON_SVG}<span>${escapeHtml(currentFollowupQ)}</span></div><div class="bseas-qa-a bseas-markdown" id="bseas-stream-followup">${followupHtml}</div></div>`;
+                    html += `<div class="bseas-qa-item"><div class="bseas-qa-q">${ASK_ICON_SVG}<span>${escapeHtml(currentFollowupQ)}</span></div><div class="bseas-qa-a bseas-markdown" id="bseas-stream-followup-${currentGenerationId}">${followupHtml}</div></div>`;
                 }
                 if (!bseas_disable_api) {
                     html += `<div class="bseas-followup-section"><div class="bseas-followup-label"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>追问</div><textarea class="bseas-followup-input" id="bseas-followup-input" placeholder="就视频内容提问" ${isGeneratingAI ? 'disabled' : ''}></textarea><button class="bseas-followup-btn" id="bseas-followup-btn" ${isGeneratingAI ? 'disabled' : ''}>${isGeneratingAI ? '生成中...' : '发送追问'}</button></div>`;
@@ -4326,6 +4499,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         safeSetInnerHTML(el, html);
         const aiResultEl = el.querySelector('#bseas-ai-result');
         if (aiResultEl) renderAISummaryInto(aiResultEl, stripAdLine(cachedSummary || ''));
+        if (aiResultEl && cachedReasoning) aiResultEl.insertBefore(createThinkingBlock(cachedReasoning, 'done', false), aiResultEl.firstChild);
         el.querySelectorAll('.bseas-qa-md').forEach((qaEl, i) => { if (cachedQA[i]) renderMarkdownInto(qaEl, cachedQA[i].a); });
         document.getElementById('bseas-copy-prompt-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -4356,6 +4530,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
             isGeneratingAI = true;
             const myGenerationId = ++currentGenerationId;
             currentStreamText = '';
+            lastSummaryReasoning = '';
             const genBtn = document.getElementById('bseas-generate-btn');
             const retryBtn = document.getElementById('bseas-retry-btn');
             if (genBtn) genBtn.disabled = true;
@@ -4427,18 +4602,21 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 currentFollowupText = '';
                 fBtn.disabled = true; fBtn.textContent = '思考中...'; fInput.disabled = true;
                 const followupSection = el.querySelector('.bseas-followup-section');
-                const answerId = 'bseas-stream-followup';
+                if (!followupSection) { isGeneratingAI = false; currentFollowupQ = null; currentFollowupText = ''; fBtn.disabled = false; fBtn.textContent = '发送追问'; fInput.disabled = false; return; }
+                // 每条追问的回答容器使用代次唯一 id，避免与历史回答重名而写错目标
+                const answerId = `bseas-stream-followup-${myGenerationId}`;
                 const qaEl = document.createElement('div');
                 qaEl.className = 'bseas-qa-item';
                 safeSetInnerHTML(qaEl, `<div class="bseas-qa-q">${ASK_ICON_SVG}<span>${escapeHtml(q)}</span></div><div class="bseas-qa-a bseas-markdown" id="${answerId}"><div style="display:flex;align-items:center;gap:8px;color:var(--bseas-text-muted);"><span class="bseas-spinner" style="width:16px;height:16px;border-width:2px;"></span>正在解答...</div></div>`);
                 followupSection.insertAdjacentElement('beforebegin', qaEl);
-                const ansEl = document.getElementById(answerId);
+                const ansEl = qaEl.querySelector('.bseas-qa-a');
                 aiConversationHistory.push({ role: 'user', content: q });
                 const renderer = createThrottledRenderer(ansEl, { shouldRender: () => myGenerationId === currentGenerationId });
+                let followupReasoning = '';
                 try {
-                    const a = await callAPIStream(aiConversationHistory, text => { currentFollowupText = text; renderer.update(text); });
+                    const a = await callAPIStream(aiConversationHistory, (text, reasoning) => { currentFollowupText = text; followupReasoning = reasoning || ''; renderer.update(text, followupReasoning); });
                     if (myGenerationId !== currentGenerationId) return;
-                    renderer.finalize(a);
+                    renderer.finalize(a, followupReasoning);
                     aiConversationHistory.push({ role: 'assistant', content: a });
                     appendCachedQA(currentVideoKey, q, a);
                     currentFollowupQ = null;
@@ -4540,6 +4718,18 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
                 <div class="bseas-settings-row-action">
                     <label class="bseas-toggle">
                         <input type="checkbox" id="bseas-s-auto" ${bseas_auto_summary ? 'checked' : ''}>
+                        <span class="bseas-toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+            <div class="bseas-settings-row inline">
+                <div class="bseas-settings-row-content">
+                    <div class="bseas-settings-row-label">深度思考</div>
+                    <div class="bseas-settings-row-desc">部分模型不支持开关思考，将不受影响</div>
+                </div>
+                <div class="bseas-settings-row-action">
+                    <label class="bseas-toggle">
+                        <input type="checkbox" id="bseas-s-deep-thinking" ${bseas_deep_thinking ? 'checked' : ''}>
                         <span class="bseas-toggle-slider"></span>
                     </label>
                 </div>
@@ -4897,6 +5087,7 @@ ${otherTracks ? '===== 其他字幕轨道（仅作上下文参考，不要修正
         currentStreamText = '';
         currentFollowupQ = null;
         currentFollowupText = '';
+        lastSummaryReasoning = '';
         progressMarkInitialized = false;
         lastAdCheckResult = null; adDetectionNotified = false;
         if (playModeActive) stopPlayMode();
